@@ -1,42 +1,155 @@
-#root {
-  max-width: 1280px;
+* {
+  box-sizing: border-box;
+}
+
+.app-shell {
+  max-width: 900px;
   margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  padding: 1rem;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.tabs {
+  display: flex;
+  gap: 0.5rem;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+.tab {
+  padding: 0.45rem 0.8rem;
+}
+
+.tab.is-active {
+  font-weight: 700;
+}
+
+.panel {
+  border: 1px solid #d6d6d6;
+  border-radius: 8px;
+  padding: 1rem;
+  background: #fff;
+}
+
+.stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.row-between {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .card {
-  padding: 2em;
+  border: 1px solid #e3e3e3;
+  border-radius: 8px;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.75rem;
 }
 
-.read-the-docs {
-  color: #888;
+label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+input,
+button {
+  font: inherit;
+}
+
+input {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #c8c8c8;
+  border-radius: 6px;
+}
+
+button {
+  padding: 0.5rem 0.8rem;
+  border: 1px solid #c0c0c0;
+  border-radius: 6px;
+  background: #f7f7f7;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #efefef;
+}
+
+button.danger {
+  border-color: #b53f3f;
+  color: #8a1f1f;
+  background: #fff5f5;
+}
+
+button.ghost {
+  background: #fff;
+}
+
+button.linklike {
+  border: 0;
+  background: transparent;
+  padding: 0.1rem 0;
+  text-align: left;
+  color: #0b5cad;
+}
+
+.suggestions {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.sets-grid-header,
+.set-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.sets-grid {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.exercise-list,
+.settings-list {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.exercise-list li,
+.settings-list li {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.history {
+  margin-top: 1rem;
+}
+
+.history ul {
+  margin: 0;
+  padding-left: 1rem;
 }
