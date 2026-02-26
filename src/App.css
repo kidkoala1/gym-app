@@ -7,35 +7,8 @@
   margin: 0 auto;
   padding: 0.9rem;
   color: #eef0ff;
-}
-
-.topbar {
-  margin-bottom: 0.8rem;
-}
-
-h1 {
-  margin: 0;
-  font-size: 1.25rem;
-  letter-spacing: 0.02em;
-}
-
-h2 {
-  margin: 0;
-  font-size: 1.02rem;
-}
-
-h3 {
-  margin: 0;
-  font-size: 0.95rem;
-}
-
-p {
-  margin: 0;
-  font-size: 0.92rem;
-}
-
-.muted {
-  color: #c4c9ff;
+  display: grid;
+  gap: 0.8rem;
 }
 
 .panel {
@@ -48,230 +21,30 @@ p {
   box-shadow: 0 12px 36px rgba(10, 8, 24, 0.45);
 }
 
-.stack {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.tabs {
-  margin-top: 0.75rem;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.55rem;
-}
-
-.tab {
-  font-weight: 600;
-}
-
-.tab.is-active {
-  border-color: rgba(170, 126, 255, 0.9);
-  background: linear-gradient(180deg, rgba(126, 82, 227, 0.5), rgba(97, 58, 185, 0.4));
-  color: #ffffff;
-}
-
-.row-between {
-  display: grid;
-  gap: 0.65rem;
-}
-
-.row-actions {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.55rem;
-}
-
 .card {
   border: 1px solid rgba(174, 147, 244, 0.35);
   background: rgba(24, 17, 50, 0.7);
   border-radius: 12px;
   padding: 0.8rem;
-  display: grid;
-  gap: 0.75rem;
 }
 
-label {
-  display: grid;
-  gap: 0.35rem;
-  font-size: 0.85rem;
-  color: #d8dcff;
-}
-
-input,
-button {
-  font: inherit;
-}
-
-input {
-  width: 100%;
-  padding: 0.62rem;
-  border: 1px solid rgba(173, 142, 255, 0.38);
-  border-radius: 10px;
-  background: rgba(15, 11, 34, 0.75);
-  color: #f5f6ff;
-}
-
-input::placeholder {
-  color: #9ea4d9;
-}
-
-input:focus {
-  outline: none;
-  border-color: rgba(188, 149, 255, 0.95);
-  box-shadow: 0 0 0 3px rgba(173, 112, 255, 0.22);
-}
-
-button {
-  padding: 0.62rem 0.82rem;
-  border: 1px solid rgba(174, 142, 255, 0.35);
-  border-radius: 10px;
-  background: linear-gradient(180deg, rgba(103, 73, 188, 0.55), rgba(83, 57, 156, 0.5));
-  color: #faf9ff;
-  font-weight: 600;
-  cursor: pointer;
-  transition: transform 0.14s ease, filter 0.14s ease;
-}
-
-button:hover {
-  filter: brightness(1.07);
-}
-
-button:active {
-  transform: translateY(1px);
-}
-
-button.ghost {
-  background: rgba(22, 18, 48, 0.55);
-}
-
-button.danger {
-  border-color: rgba(255, 128, 151, 0.55);
-  background: linear-gradient(180deg, rgba(155, 42, 74, 0.58), rgba(128, 29, 66, 0.54));
-}
-
-button.linklike {
-  border: 0;
-  padding: 0;
-  text-align: left;
-  background: transparent;
-  color: #c9b2ff;
-}
-
-.suggestions {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.35rem;
-}
-
-.sets-grid-header,
-.set-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.55rem;
-}
-
-.sets-grid-header {
-  font-size: 0.8rem;
-  color: #c7cbf7;
-}
-
-.sets-grid {
-  display: grid;
-  gap: 0.45rem;
-}
-
-.exercise-list,
-.settings-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.6rem;
-}
-
-.exercise-list li {
-  display: grid;
-  gap: 0.28rem;
+.exercise-card {
   border: 1px solid rgba(173, 141, 255, 0.22);
   background: rgba(18, 13, 40, 0.62);
   border-radius: 10px;
   padding: 0.6rem;
 }
 
-.exercise-list span {
-  color: #c2c7f1;
-  font-size: 0.85rem;
-}
-
-.settings-item {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-}
-
-.settings-input {
-  flex: 1;
-}
-
-.delete-inline {
-  border-color: rgba(255, 118, 142, 0.8);
-  background: linear-gradient(180deg, rgba(172, 40, 74, 0.78), rgba(132, 24, 52, 0.76));
-  color: #ffeef2;
-  min-width: 84px;
+.muted {
+  color: #c4c9ff;
 }
 
 .history {
-  margin-top: 0.85rem;
-}
-
-.history ul {
-  margin: 0.55rem 0 0;
-  padding-left: 1rem;
-}
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(7, 7, 18, 0.62);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  z-index: 30;
-}
-
-.modal-card {
-  width: 100%;
-  max-width: 360px;
-  border: 1px solid rgba(179, 149, 255, 0.4);
-  border-radius: 14px;
-  padding: 0.9rem;
-  background: linear-gradient(180deg, rgba(29, 21, 58, 0.96), rgba(20, 15, 43, 0.96));
-  display: grid;
-  gap: 0.75rem;
-}
-
-.modal-card p {
-  color: #d1d6ff;
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.55rem;
+  margin-top: 0.1rem;
 }
 
 @media (min-width: 680px) {
   .app-shell {
     padding: 1.1rem;
-  }
-
-  .row-between {
-    grid-template-columns: 1fr auto;
-    align-items: center;
   }
 }

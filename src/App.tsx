@@ -1,7 +1,42 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  Alert,
+  Autocomplete,
+  Box,
+  Button,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  List,
+  ListItem,
+  Paper,
+  Snackbar,
+  Stack,
+  Tab,
+  Tabs,
+  TextField,
+  Typography,
+} from '@mui/material'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { supabase } from './lib/supabase'
+import { useAuthSession } from './features/auth/useAuthSession'
+import {
+  createExercise,
+  createWorkout,
+  deleteExercise,
+  finishWorkout as finishWorkoutApi,
+  insertWorkoutExercise,
+  insertWorkoutSets,
+  listExercises,
+  listRecentWorkouts,
+  updateExerciseName,
+} from './features/workouts/api'
+import type { ExerciseRow } from './types/db'
 import './App.css'
 
-type Tab = 'workout' | 'settings'
+type TabView = 'workout' | 'settings'
 
 type SetDraft = {
   reps: string
@@ -13,85 +48,186 @@ type CompletedSet = {
   weightKg: number
 }
 
-type WorkoutExercise = {
+type LocalWorkoutExercise = {
   name: string
   sets: CompletedSet[]
 }
 
-type WorkoutSession = {
+type ActiveWorkout = {
   id: string
   startedAt: string
-  finishedAt?: string
-  exercises: WorkoutExercise[]
+  exercises: LocalWorkoutExercise[]
 }
 
-const INITIAL_EXERCISES = [
-  'Bench Press',
-  'Squat',
-  'Deadlift',
-  'Overhead Press',
-  'Barbell Row',
-  'Pull Up',
-  'Incline Dumbbell Press',
-  'Lat Pulldown',
-  'Leg Press',
-  'Romanian Deadlift',
-]
+type SnackbarState = {
+  open: boolean
+  severity: 'success' | 'error' | 'info'
+  message: string
+}
+
+const fieldSx = {
+  '& .MuiInputBase-root': {
+    fontSize: '0.95rem',
+  },
+}
 
 function createInitialSetDraft(): SetDraft[] {
   return [{ reps: '', weight: '' }]
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('workout')
-  const [exerciseLibrary, setExerciseLibrary] = useState<string[]>(INITIAL_EXERCISES)
+  const queryClient = useQueryClient()
+  const { session, user, isLoading: authLoading } = useAuthSession()
 
-  const [activeWorkout, setActiveWorkout] = useState<WorkoutSession | null>(null)
-  const [workoutHistory, setWorkoutHistory] = useState<WorkoutSession[]>([])
-
+  const [activeTab, setActiveTab] = useState<TabView>('workout')
+  const [activeWorkout, setActiveWorkout] = useState<ActiveWorkout | null>(null)
   const [isAddingExercise, setIsAddingExercise] = useState(false)
   const [exerciseNameInput, setExerciseNameInput] = useState('')
   const [setDrafts, setSetDrafts] = useState<SetDraft[]>(createInitialSetDraft())
-
   const [newExerciseInput, setNewExerciseInput] = useState('')
-  const [deleteTargetIndex, setDeleteTargetIndex] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<ExerciseRow | null>(null)
+  const [exerciseEditValues, setExerciseEditValues] = useState<Record<string, string>>({})
+  const [snackbar, setSnackbar] = useState<SnackbarState>({
+    open: false,
+    severity: 'info',
+    message: '',
+  })
 
-  const exerciseSuggestions = useMemo(() => {
-    const term = exerciseNameInput.trim().toLowerCase()
-    if (!term) return exerciseLibrary.slice(0, 8)
+  const exercisesQuery = useQuery({
+    queryKey: ['exercises', user?.id],
+    queryFn: () => listExercises(user!.id),
+    enabled: Boolean(user?.id),
+  })
 
-    return exerciseLibrary
-      .filter((name) => name.toLowerCase().includes(term))
-      .slice(0, 8)
-  }, [exerciseLibrary, exerciseNameInput])
+  const recentWorkoutsQuery = useQuery({
+    queryKey: ['recent-workouts', user?.id],
+    queryFn: () => listRecentWorkouts(user!.id, 5),
+    enabled: Boolean(user?.id),
+  })
 
-  const deleteTargetName =
-    deleteTargetIndex === null ? '' : (exerciseLibrary[deleteTargetIndex] ?? '')
+  const exerciseLibrary = exercisesQuery.data ?? []
+  const exerciseNames = useMemo(
+    () => exerciseLibrary.map((exercise) => exercise.name),
+    [exerciseLibrary],
+  )
 
-  function startWorkout() {
-    setActiveWorkout({
-      id: crypto.randomUUID(),
-      startedAt: new Date().toISOString(),
-      exercises: [],
+  useEffect(() => {
+    const map: Record<string, string> = {}
+    exerciseLibrary.forEach((exercise) => {
+      map[exercise.id] = exercise.name
     })
-    setIsAddingExercise(false)
-    setExerciseNameInput('')
-    setSetDrafts(createInitialSetDraft())
+    setExerciseEditValues(map)
+  }, [exerciseLibrary])
+
+  const startWorkoutMutation = useMutation({
+    mutationFn: async () => {
+      if (!user) throw new Error('You need to be signed in.')
+      return createWorkout(user.id, new Date().toISOString())
+    },
+  })
+
+  const finishWorkoutMutation = useMutation({
+    mutationFn: async (payload: { workoutId: string }) => {
+      if (!user) throw new Error('You need to be signed in.')
+      return finishWorkoutApi(payload.workoutId, user.id, new Date().toISOString())
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['recent-workouts', user?.id] })
+    },
+  })
+
+  const createExerciseMutation = useMutation({
+    mutationFn: async (name: string) => {
+      if (!user) throw new Error('You need to be signed in.')
+      return createExercise(user.id, name)
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] })
+    },
+  })
+
+  const renameExerciseMutation = useMutation({
+    mutationFn: async (payload: { id: string; name: string }) => {
+      if (!user) throw new Error('You need to be signed in.')
+      return updateExerciseName(payload.id, user.id, payload.name)
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] })
+    },
+  })
+
+  const deleteExerciseMutation = useMutation({
+    mutationFn: async (exerciseId: string) => {
+      if (!user) throw new Error('You need to be signed in.')
+      return deleteExercise(exerciseId, user.id)
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] })
+    },
+  })
+
+  function showError(message: string) {
+    setSnackbar({ open: true, severity: 'error', message })
   }
 
-  function finishWorkout() {
-    if (!activeWorkout) return
+  function showSuccess(message: string) {
+    setSnackbar({ open: true, severity: 'success', message })
+  }
 
-    const finishedWorkout: WorkoutSession = {
-      ...activeWorkout,
-      finishedAt: new Date().toISOString(),
+  async function handleGoogleSignIn() {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin,
+      },
+    })
+
+    if (error) showError(error.message)
+  }
+
+  async function handleSignOut() {
+    const { error } = await supabase.auth.signOut()
+    if (error) {
+      showError(error.message)
+      return
     }
 
-    setWorkoutHistory((prev) => [finishedWorkout, ...prev])
     setActiveWorkout(null)
     setIsAddingExercise(false)
     setExerciseNameInput('')
     setSetDrafts(createInitialSetDraft())
+    showSuccess('Signed out.')
+  }
+
+  async function startWorkout() {
+    try {
+      const workout = await startWorkoutMutation.mutateAsync()
+      setActiveWorkout({
+        id: workout.id,
+        startedAt: workout.started_at,
+        exercises: [],
+      })
+      setIsAddingExercise(false)
+      setExerciseNameInput('')
+      setSetDrafts(createInitialSetDraft())
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'Could not start workout.')
+    }
+  }
+
+  async function finishWorkout() {
+    if (!activeWorkout) return
+
+    try {
+      await finishWorkoutMutation.mutateAsync({ workoutId: activeWorkout.id })
+      setActiveWorkout(null)
+      setIsAddingExercise(false)
+      setExerciseNameInput('')
+      setSetDrafts(createInitialSetDraft())
+      showSuccess('Workout finished and saved.')
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'Could not finish workout.')
+    }
   }
 
   function openAddExercise() {
@@ -103,11 +239,11 @@ function App() {
   function updateSetDraft(index: number, field: keyof SetDraft, value: string) {
     setSetDrafts((prev) => {
       const next = prev.map((row, i) => (i === index ? { ...row, [field]: value } : row))
-
       const last = next[next.length - 1]
+      const editedIsLast = index === next.length - 1
       const lastFilled = last.reps.trim() !== '' && last.weight.trim() !== ''
 
-      if (lastFilled) {
+      if (editedIsLast && lastFilled) {
         next.push({ reps: '', weight: last.weight.trim() })
       }
 
@@ -115,8 +251,8 @@ function App() {
     })
   }
 
-  function finishExercise() {
-    if (!activeWorkout) return
+  async function finishExercise() {
+    if (!activeWorkout || !user) return
 
     const cleanedName = exerciseNameInput.trim()
     if (!cleanedName) return
@@ -132,176 +268,249 @@ function App() {
 
     if (completedSets.length === 0) return
 
-    setActiveWorkout((prev) => {
-      if (!prev) return prev
+    try {
+      const position = activeWorkout.exercises.length + 1
+      const workoutExercise = await insertWorkoutExercise(activeWorkout.id, cleanedName, position)
+      await insertWorkoutSets(workoutExercise.id, completedSets)
 
-      return {
-        ...prev,
-        exercises: [...prev.exercises, { name: cleanedName, sets: completedSets }],
+      setActiveWorkout((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          exercises: [...prev.exercises, { name: cleanedName, sets: completedSets }],
+        }
+      })
+
+      if (!exerciseNames.some((name) => name.toLowerCase() === cleanedName.toLowerCase())) {
+        try {
+          await createExerciseMutation.mutateAsync(cleanedName)
+        } catch (error) {
+          const maybeDuplicate = error as Error & { code?: string | null }
+          if (maybeDuplicate.code !== '23505') {
+            throw error
+          }
+        }
       }
-    })
 
-    if (!exerciseLibrary.some((name) => name.toLowerCase() === cleanedName.toLowerCase())) {
-      setExerciseLibrary((prev) => [...prev, cleanedName])
+      await queryClient.invalidateQueries({ queryKey: ['recent-workouts', user.id] })
+      setIsAddingExercise(false)
+      setExerciseNameInput('')
+      setSetDrafts(createInitialSetDraft())
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'Could not save exercise.')
     }
-
-    setIsAddingExercise(false)
-    setExerciseNameInput('')
-    setSetDrafts(createInitialSetDraft())
   }
 
-  function addExerciseToLibrary() {
+  async function addExerciseToLibrary() {
     const value = newExerciseInput.trim()
     if (!value) return
 
-    if (exerciseLibrary.some((name) => name.toLowerCase() === value.toLowerCase())) {
+    try {
+      await createExerciseMutation.mutateAsync(value)
       setNewExerciseInput('')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not add exercise.'
+      showError(message)
+    }
+  }
+
+  async function commitExerciseNameChange(exerciseId: string, originalName: string) {
+    const current = (exerciseEditValues[exerciseId] ?? '').trim()
+    const previous = originalName.trim()
+
+    if (!current) {
+      setExerciseEditValues((prev) => ({ ...prev, [exerciseId]: previous }))
       return
     }
 
-    setExerciseLibrary((prev) => [...prev, value])
-    setNewExerciseInput('')
+    if (current === previous) return
+
+    try {
+      await renameExerciseMutation.mutateAsync({ id: exerciseId, name: current })
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'Could not update exercise name.')
+      setExerciseEditValues((prev) => ({ ...prev, [exerciseId]: previous }))
+    }
   }
 
-  function updateExerciseNameInLibrary(index: number, value: string) {
-    setExerciseLibrary((prev) => prev.map((name, i) => (i === index ? value : name)))
+  async function confirmDeleteExercise() {
+    if (!deleteTarget) return
+
+    try {
+      await deleteExerciseMutation.mutateAsync(deleteTarget.id)
+      setDeleteTarget(null)
+    } catch (error) {
+      showError(error instanceof Error ? error.message : 'Could not delete exercise.')
+    }
   }
 
-  function requestDeleteExercise(index: number) {
-    setDeleteTargetIndex(index)
+  if (authLoading) {
+    return (
+      <Box className="app-shell" sx={{ display: 'grid', placeItems: 'center', minHeight: '90vh' }}>
+        <CircularProgress />
+      </Box>
+    )
   }
 
-  function confirmDeleteExercise() {
-    if (deleteTargetIndex === null) return
-
-    setExerciseLibrary((prev) => prev.filter((_, i) => i !== deleteTargetIndex))
-    setDeleteTargetIndex(null)
-  }
-
-  function cancelDeleteExercise() {
-    setDeleteTargetIndex(null)
+  if (!session || !user) {
+    return (
+      <Box className="app-shell" sx={{ display: 'grid', placeItems: 'center', minHeight: '90vh' }}>
+        <Paper className="panel" elevation={0} sx={{ width: '100%', maxWidth: 460 }}>
+          <Stack spacing={1.2}>
+            <Typography variant="h5" sx={{ fontSize: '1.25rem', fontWeight: 700 }}>
+              Gym Workout Tracker
+            </Typography>
+            <Typography color="text.secondary">
+              Sign in to sync your workouts and exercise settings.
+            </Typography>
+            <Button variant="contained" onClick={handleGoogleSignIn}>
+              Sign in with Google
+            </Button>
+          </Stack>
+        </Paper>
+      </Box>
+    )
   }
 
   return (
-    <div className="app-shell">
-      <header className="topbar panel">
-        <h1>Gym Workout Tracker</h1>
-        <nav className="tabs">
-          <button
-            className={activeTab === 'workout' ? 'tab is-active' : 'tab'}
-            onClick={() => setActiveTab('workout')}
-          >
-            Workout
-          </button>
-          <button
-            className={activeTab === 'settings' ? 'tab is-active' : 'tab'}
-            onClick={() => setActiveTab('settings')}
-          >
-            Settings
-          </button>
-        </nav>
-      </header>
+    <Box className="app-shell">
+      <Paper className="panel" elevation={0}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+          <Typography variant="h5" sx={{ fontSize: '1.25rem', fontWeight: 700 }}>
+            Gym Workout Tracker
+          </Typography>
+          <Button variant="outlined" onClick={handleSignOut}>
+            Sign out
+          </Button>
+        </Stack>
+
+        <Tabs
+          value={activeTab}
+          onChange={(_, value: TabView) => setActiveTab(value)}
+          variant="fullWidth"
+          textColor="inherit"
+          indicatorColor="secondary"
+          sx={{
+            minHeight: 44,
+            '& .MuiTab-root': { minHeight: 44, fontWeight: 600 },
+          }}
+        >
+          <Tab value="workout" label="Workout" />
+          <Tab value="settings" label="Settings" />
+        </Tabs>
+      </Paper>
 
       {activeTab === 'workout' ? (
-        <main className="panel">
+        <Paper className="panel" elevation={0}>
           {!activeWorkout ? (
-            <section className="stack">
-              <p>No active workout session.</p>
-              <button onClick={startWorkout}>Start Workout</button>
-            </section>
+            <Stack spacing={1.25}>
+              <Typography>No active workout session.</Typography>
+              <Button
+                variant="contained"
+                onClick={startWorkout}
+                disabled={startWorkoutMutation.isPending}
+              >
+                Start Workout
+              </Button>
+            </Stack>
           ) : (
-            <section className="stack">
-              <div className="row-between">
-                <p>Started: {new Date(activeWorkout.startedAt).toLocaleString()}</p>
-                <button className="danger" onClick={finishWorkout}>
+            <Stack spacing={1.25}>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
+                <Typography>Started: {new Date(activeWorkout.startedAt).toLocaleString()}</Typography>
+                <Button
+                  variant="contained"
+                  color="error"
+                  onClick={finishWorkout}
+                  disabled={finishWorkoutMutation.isPending}
+                >
                   Finish Workout
-                </button>
-              </div>
+                </Button>
+              </Stack>
 
-              <div>
-                <h2>Current Exercises</h2>
+              <Stack spacing={0.75}>
+                <Typography variant="h6" sx={{ fontSize: '1rem' }}>
+                  Current Exercises
+                </Typography>
                 {activeWorkout.exercises.length === 0 ? (
-                  <p className="muted">No exercises added yet.</p>
+                  <Typography className="muted">No exercises added yet.</Typography>
                 ) : (
-                  <ul className="exercise-list">
+                  <List disablePadding sx={{ display: 'grid', gap: 0.7 }}>
                     {activeWorkout.exercises.map((exercise, idx) => (
-                      <li key={`${exercise.name}-${idx}`}>
-                        <strong>{exercise.name}</strong>
-                        <span>
-                          {exercise.sets
-                            .map((set) => `${set.reps} reps x ${set.weightKg} kg`)
-                            .join(' | ')}
-                        </span>
-                      </li>
+                      <ListItem key={`${exercise.name}-${idx}`} className="exercise-card" disablePadding>
+                        <Box>
+                          <Typography sx={{ fontWeight: 700 }}>{exercise.name}</Typography>
+                          <Typography variant="body2" sx={{ color: '#c2c7f1' }}>
+                            {exercise.sets
+                              .map((set) => `${set.reps} reps x ${set.weightKg} kg`)
+                              .join(' | ')}
+                          </Typography>
+                        </Box>
+                      </ListItem>
                     ))}
-                  </ul>
+                  </List>
                 )}
-              </div>
+              </Stack>
 
               {!isAddingExercise ? (
-                <button onClick={openAddExercise}>Add Exercise</button>
+                <Button variant="contained" onClick={openAddExercise}>
+                  Add Exercise
+                </Button>
               ) : (
-                <div className="card">
-                  <h3>New Exercise</h3>
+                <Paper className="card" elevation={0}>
+                  <Typography variant="h6" sx={{ fontSize: '1rem', mb: 0.6 }}>
+                    New Exercise
+                  </Typography>
 
-                  <label>
-                    Exercise
-                    <input
-                      type="text"
-                      placeholder="Type exercise name"
-                      value={exerciseNameInput}
-                      onChange={(e) => setExerciseNameInput(e.target.value)}
-                    />
-                  </label>
+                  <Autocomplete
+                    freeSolo
+                    options={exerciseNames}
+                    loading={exercisesQuery.isLoading}
+                    inputValue={exerciseNameInput}
+                    onInputChange={(_, value) => setExerciseNameInput(value)}
+                    renderInput={(params) => (
+                      <TextField {...params} label="Exercise" placeholder="Type exercise name" sx={fieldSx} />
+                    )}
+                    sx={{ mb: 0.7 }}
+                  />
 
-                  {exerciseSuggestions.length > 0 && (
-                    <ul className="suggestions">
-                      {exerciseSuggestions.map((name) => (
-                        <li key={name}>
-                          <button
-                            className="linklike"
-                            onClick={() => setExerciseNameInput(name)}
-                          >
-                            {name}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  <Stack direction="row" spacing={1}>
+                    <Typography sx={{ flex: 1, fontSize: '0.8rem', color: '#c7cbf7' }}>Reps</Typography>
+                    <Typography sx={{ flex: 1, fontSize: '0.8rem', color: '#c7cbf7' }}>
+                      Weight (kg)
+                    </Typography>
+                  </Stack>
 
-                  <div className="sets-grid-header">
-                    <span>Reps</span>
-                    <span>Weight (kg)</span>
-                  </div>
-
-                  <div className="sets-grid">
+                  <Stack spacing={0.7} sx={{ mb: 0.75 }}>
                     {setDrafts.map((set, idx) => (
-                      <div className="set-row" key={`set-${idx}`}>
-                        <input
-                          inputMode="numeric"
+                      <Stack key={`set-${idx}`} direction="row" spacing={1}>
+                        <TextField
                           type="number"
-                          min="1"
+                          inputMode="numeric"
                           placeholder="Reps"
                           value={set.reps}
                           onChange={(e) => updateSetDraft(idx, 'reps', e.target.value)}
+                          inputProps={{ min: 1 }}
+                          sx={{ ...fieldSx, flex: 1 }}
                         />
-                        <input
-                          inputMode="decimal"
+                        <TextField
                           type="number"
-                          min="0"
-                          step="0.5"
+                          inputMode="decimal"
                           placeholder="Weight (kg)"
                           value={set.weight}
                           onChange={(e) => updateSetDraft(idx, 'weight', e.target.value)}
+                          inputProps={{ min: 0, step: 0.5 }}
+                          sx={{ ...fieldSx, flex: 1 }}
                         />
-                      </div>
+                      </Stack>
                     ))}
-                  </div>
+                  </Stack>
 
-                  <div className="row-actions">
-                    <button onClick={finishExercise}>Finish Exercise</button>
-                    <button
-                      className="ghost"
+                  <Stack direction="row" spacing={1}>
+                    <Button variant="contained" onClick={finishExercise} fullWidth>
+                      Finish Exercise
+                    </Button>
+                    <Button
+                      variant="outlined"
                       onClick={() => {
                         setIsAddingExercise(false)
                         setExerciseNameInput('')
@@ -309,83 +518,142 @@ function App() {
                       }}
                     >
                       Cancel
-                    </button>
-                  </div>
-                </div>
+                    </Button>
+                  </Stack>
+                </Paper>
               )}
-            </section>
+            </Stack>
           )}
-        </main>
+        </Paper>
       ) : (
-        <main className="panel">
-          <section className="stack">
-            <h2>Exercise Settings</h2>
+        <Paper className="panel" elevation={0}>
+          <Stack spacing={1.25}>
+            <Typography variant="h6" sx={{ fontSize: '1rem' }}>
+              Exercise Settings
+            </Typography>
 
-            <div className="row-actions">
-              <input
-                type="text"
+            <Stack direction="row" spacing={1}>
+              <TextField
+                fullWidth
                 placeholder="Add new exercise"
                 value={newExerciseInput}
                 onChange={(e) => setNewExerciseInput(e.target.value)}
+                sx={fieldSx}
               />
-              <button onClick={addExerciseToLibrary}>Add</button>
-            </div>
+              <Button
+                variant="contained"
+                onClick={addExerciseToLibrary}
+                disabled={createExerciseMutation.isPending}
+              >
+                Add
+              </Button>
+            </Stack>
 
-            <ul className="settings-list">
-              {exerciseLibrary.map((name, index) => (
-                <li key={`${name}-${index}`} className="settings-item">
-                  <input
-                    className="settings-input"
-                    type="text"
-                    value={name}
-                    onChange={(e) => updateExerciseNameInLibrary(index, e.target.value)}
-                  />
-                  <button
-                    className="delete-inline"
-                    onClick={() => requestDeleteExercise(index)}
-                  >
-                    Delete
-                  </button>
-                </li>
+            <List disablePadding sx={{ display: 'grid', gap: 0.7 }}>
+              {exerciseLibrary.map((exercise) => (
+                <ListItem key={exercise.id} disablePadding>
+                  <Stack direction="row" spacing={1} sx={{ width: '100%' }}>
+                    <TextField
+                      fullWidth
+                      value={exerciseEditValues[exercise.id] ?? ''}
+                      onChange={(e) =>
+                        setExerciseEditValues((prev) => ({
+                          ...prev,
+                          [exercise.id]: e.target.value,
+                        }))
+                      }
+                      onBlur={() => commitExerciseNameChange(exercise.id, exercise.name)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          ;(event.target as HTMLInputElement).blur()
+                        }
+                      }}
+                      sx={fieldSx}
+                    />
+                    <Button
+                      variant="contained"
+                      color="error"
+                      onClick={() => setDeleteTarget(exercise)}
+                      disabled={deleteExerciseMutation.isPending}
+                    >
+                      Delete
+                    </Button>
+                  </Stack>
+                </ListItem>
               ))}
-            </ul>
-          </section>
-        </main>
+            </List>
+          </Stack>
+        </Paper>
       )}
 
-      {workoutHistory.length > 0 && (
-        <footer className="panel history">
-          <h3>Recent Workouts</h3>
-          <ul>
-            {workoutHistory.slice(0, 3).map((workout) => (
-              <li key={workout.id}>
-                {new Date(workout.startedAt).toLocaleDateString()} - {workout.exercises.length}{' '}
-                exercise(s)
-              </li>
+      {(recentWorkoutsQuery.data?.length ?? 0) > 0 && (
+        <Paper className="panel history" elevation={0}>
+          <Typography variant="h6" sx={{ fontSize: '1rem' }}>
+            Recent Workouts
+          </Typography>
+          <List sx={{ pt: 0.75, pb: 0, pl: 1.5 }}>
+            {recentWorkoutsQuery.data!.map((workout) => (
+              <ListItem key={workout.id} sx={{ display: 'list-item', py: 0.3 }}>
+                <Typography variant="body2">
+                  {new Date(workout.started_at).toLocaleDateString()} -{' '}
+                  {workout.workout_exercises?.length ?? 0} exercise(s)
+                </Typography>
+              </ListItem>
             ))}
-          </ul>
-        </footer>
+          </List>
+        </Paper>
       )}
 
-      {deleteTargetIndex !== null && (
-        <div className="modal-backdrop" onClick={cancelDeleteExercise}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <h3>Delete exercise?</h3>
-            <p>
-              This will remove <strong>{deleteTargetName}</strong> from your exercise list.
-            </p>
-            <div className="modal-actions">
-              <button className="ghost" onClick={cancelDeleteExercise}>
-                Cancel
-              </button>
-              <button className="delete-inline" onClick={confirmDeleteExercise}>
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        fullWidth
+        maxWidth="xs"
+        PaperProps={{
+          sx: {
+            border: '1px solid rgba(179, 149, 255, 0.4)',
+            borderRadius: 2,
+            background: 'linear-gradient(180deg, rgba(29, 21, 58, 0.96), rgba(20, 15, 43, 0.96))',
+            color: '#eef0ff',
+          },
+        }}
+      >
+        <DialogTitle>Delete exercise?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            This will remove <strong>{deleteTarget?.name}</strong> from your exercise list.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 2, pb: 2 }}>
+          <Button variant="outlined" onClick={() => setDeleteTarget(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={confirmDeleteExercise}
+            disabled={deleteExerciseMutation.isPending}
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3500}
+        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
+      >
+        <Alert
+          severity={snackbar.severity}
+          variant="filled"
+          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+    </Box>
   )
 }
 
