@@ -5,6 +5,7 @@ import type {
   WorkoutSetInput,
   WorkoutSetRow,
   WorkoutExerciseRow,
+  WorkoutHistoryRow,
   WorkoutWithExerciseRefs,
 } from '../../types/db'
 
@@ -86,6 +87,11 @@ export async function finishWorkout(
   return data as WorkoutRow
 }
 
+export async function deleteWorkout(workoutId: string, userId: string): Promise<void> {
+  const { error } = await supabase.from('workouts').delete().eq('id', workoutId).eq('user_id', userId)
+  if (error) throwSupabaseError(error)
+}
+
 export async function insertWorkoutExercise(
   workoutId: string,
   exerciseName: string,
@@ -99,6 +105,26 @@ export async function insertWorkoutExercise(
 
   if (error) throwSupabaseError(error)
   return data as WorkoutExerciseRow
+}
+
+export async function updateWorkoutExerciseName(
+  workoutExerciseId: string,
+  exerciseName: string,
+): Promise<WorkoutExerciseRow> {
+  const { data, error } = await supabase
+    .from('workout_exercises')
+    .update({ exercise_name: exerciseName })
+    .eq('id', workoutExerciseId)
+    .select('id,workout_id,exercise_name,position')
+    .single()
+
+  if (error) throwSupabaseError(error)
+  return data as WorkoutExerciseRow
+}
+
+export async function deleteWorkoutExercise(workoutExerciseId: string): Promise<void> {
+  const { error } = await supabase.from('workout_exercises').delete().eq('id', workoutExerciseId)
+  if (error) throwSupabaseError(error)
 }
 
 export async function insertWorkoutSets(
@@ -121,6 +147,22 @@ export async function insertWorkoutSets(
   return (data ?? []) as WorkoutSetRow[]
 }
 
+export async function updateWorkoutSet(
+  workoutSetId: string,
+  reps: number,
+  weightKg: number,
+): Promise<WorkoutSetRow> {
+  const { data, error } = await supabase
+    .from('workout_sets')
+    .update({ reps, weight_kg: weightKg })
+    .eq('id', workoutSetId)
+    .select('id,workout_exercise_id,set_number,reps,weight_kg')
+    .single()
+
+  if (error) throwSupabaseError(error)
+  return data as WorkoutSetRow
+}
+
 export async function listRecentWorkouts(
   userId: string,
   limit: number,
@@ -134,4 +176,17 @@ export async function listRecentWorkouts(
 
   if (error) throwSupabaseError(error)
   return (data ?? []) as WorkoutWithExerciseRefs[]
+}
+
+export async function listWorkoutHistory(userId: string): Promise<WorkoutHistoryRow[]> {
+  const { data, error } = await supabase
+    .from('workouts')
+    .select(
+      'id,started_at,finished_at,workout_exercises(id,exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
+    )
+    .eq('user_id', userId)
+    .order('started_at', { ascending: false })
+
+  if (error) throwSupabaseError(error)
+  return (data ?? []) as WorkoutHistoryRow[]
 }

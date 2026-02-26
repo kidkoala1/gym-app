@@ -43,6 +43,17 @@
   margin-top: 0.1rem;
 }
 
+.history-workout-card {
+  border: 1px solid rgba(151, 118, 238, 0.55);
+  background: linear-gradient(180deg, rgba(34, 24, 66, 0.84), rgba(20, 14, 44, 0.84));
+  box-shadow: inset 0 0 0 1px rgba(172, 141, 247, 0.15);
+}
+
+.history-exercise-card {
+  border: 1px solid rgba(132, 168, 255, 0.35);
+  background: linear-gradient(180deg, rgba(20, 25, 55, 0.7), rgba(16, 20, 45, 0.7));
+}
+
 @media (min-width: 680px) {
   .app-shell {
     padding: 1.1rem;

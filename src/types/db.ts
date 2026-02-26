@@ -5,6 +5,13 @@ export interface ExerciseRow {
   created_at: string
 }
 
+export interface ProfileRow {
+  id: string
+  display_name: string | null
+  avatar_url: string | null
+  created_at: string
+}
+
 export interface WorkoutRow {
   id: string
   user_id: string
@@ -33,6 +40,27 @@ export interface WorkoutWithExerciseRefs {
   started_at: string
   finished_at: string | null
   workout_exercises: Array<{ id: string }>
+}
+
+export interface WorkoutHistorySet {
+  id: string
+  set_number: number
+  reps: number
+  weight_kg: number
+}
+
+export interface WorkoutHistoryExercise {
+  id: string
+  exercise_name: string
+  position: number
+  workout_sets: WorkoutHistorySet[]
+}
+
+export interface WorkoutHistoryRow {
+  id: string
+  started_at: string
+  finished_at: string | null
+  workout_exercises: WorkoutHistoryExercise[]
 }
 
 export interface WorkoutSetInput {
