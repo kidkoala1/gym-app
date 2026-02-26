@@ -36,7 +36,6 @@ import {
   insertWorkoutSets,
   listExercises,
   listWorkoutHistory,
-  updateExerciseName,
   updateWorkoutExerciseName,
   updateWorkoutSet,
 } from './features/workouts/api'
@@ -46,6 +45,7 @@ import type {
   SetDraft,
   SettingsView,
 } from './features/workouts/localTypes'
+import { DEFAULT_EXERCISE_NAMES } from './features/workouts/defaultExercises'
 import { supabase } from './lib/supabase'
 import './App.css'
 
@@ -81,7 +81,6 @@ function App() {
 
   const [newExerciseInput, setNewExerciseInput] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ExerciseRow | null>(null)
-  const [exerciseEditValues, setExerciseEditValues] = useState<Record<string, string>>({})
 
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({})
   const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null)
@@ -89,6 +88,7 @@ function App() {
   const [workoutMenuAnchor, setWorkoutMenuAnchor] = useState<HTMLElement | null>(null)
   const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null)
   const [cancelWorkoutConfirmOpen, setCancelWorkoutConfirmOpen] = useState(false)
+  const [signOutConfirmOpen, setSignOutConfirmOpen] = useState(false)
 
   const [profileDisplayName, setProfileDisplayName] = useState('')
   const [profileAvatarUrl, setProfileAvatarUrl] = useState('')
@@ -117,18 +117,20 @@ function App() {
     enabled: Boolean(user?.id),
   })
 
-  const exerciseLibrary = exercisesQuery.data ?? []
-  const exerciseNames = useMemo(
-    () => exerciseLibrary.map((exercise) => exercise.name),
-    [exerciseLibrary],
-  )
+  const exerciseLibrary = useMemo(() => exercisesQuery.data ?? [], [exercisesQuery.data])
+  const exerciseNames = useMemo(() => {
+    const merged = new Set<string>(DEFAULT_EXERCISE_NAMES.map((name) => name.toLowerCase()))
+    const names: string[] = [...DEFAULT_EXERCISE_NAMES]
 
-  useEffect(() => {
-    const map: Record<string, string> = {}
     exerciseLibrary.forEach((exercise) => {
-      map[exercise.id] = exercise.name
+      const key = exercise.name.toLowerCase()
+      if (!merged.has(key)) {
+        merged.add(key)
+        names.push(exercise.name)
+      }
     })
-    setExerciseEditValues(map)
+
+    return names.sort((a, b) => a.localeCompare(b))
   }, [exerciseLibrary])
 
   useEffect(() => {
@@ -169,16 +171,6 @@ function App() {
     mutationFn: async (name: string) => {
       if (!user) throw new Error('You need to be signed in.')
       return createExercise(user.id, name)
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] })
-    },
-  })
-
-  const renameExerciseMutation = useMutation({
-    mutationFn: async (payload: { id: string; name: string }) => {
-      if (!user) throw new Error('You need to be signed in.')
-      return updateExerciseName(payload.id, user.id, payload.name)
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] })
@@ -396,6 +388,11 @@ function App() {
     showSuccess('Signed out.')
   }
 
+  async function confirmSignOut() {
+    setSignOutConfirmOpen(false)
+    await handleSignOut()
+  }
+
   async function saveProfile() {
     try {
       await upsertProfileMutation.mutateAsync({
@@ -524,24 +521,6 @@ function App() {
     }
   }
 
-  async function commitExerciseNameChange(exerciseId: string, originalName: string) {
-    const current = (exerciseEditValues[exerciseId] ?? '').trim()
-    const previous = originalName.trim()
-
-    if (!current) {
-      setExerciseEditValues((prev) => ({ ...prev, [exerciseId]: previous }))
-      return
-    }
-    if (current === previous) return
-
-    try {
-      await renameExerciseMutation.mutateAsync({ id: exerciseId, name: current })
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Could not update exercise name.')
-      setExerciseEditValues((prev) => ({ ...prev, [exerciseId]: previous }))
-    }
-  }
-
   async function confirmDeleteExercise() {
     if (!deleteTarget) return
     try {
@@ -571,9 +550,6 @@ function App() {
           <Typography variant="h5" sx={{ fontSize: '1.25rem', fontWeight: 700 }}>
             Gym Workout Tracker
           </Typography>
-          <Button variant="outlined" onClick={handleSignOut}>
-            Sign out
-          </Button>
         </Stack>
 
         <Tabs
@@ -636,8 +612,8 @@ function App() {
       ) : (
         <SettingsTab
           settingsView={settingsView}
+          defaultExerciseNames={DEFAULT_EXERCISE_NAMES}
           exerciseLibrary={exerciseLibrary}
-          exerciseEditValues={exerciseEditValues}
           profileDisplayName={profileDisplayName}
           profileAvatarUrl={profileAvatarUrl}
           fieldSx={fieldSx}
@@ -649,14 +625,11 @@ function App() {
           onSettingsViewChange={setSettingsView}
           onNewExerciseInputChange={setNewExerciseInput}
           onAddExerciseToLibrary={addExerciseToLibrary}
-          onExerciseEditValueChange={(exerciseId, value) =>
-            setExerciseEditValues((prev) => ({ ...prev, [exerciseId]: value }))
-          }
-          onExerciseEditCommit={commitExerciseNameChange}
           onExerciseDeleteRequest={setDeleteTarget}
           onProfileDisplayNameChange={setProfileDisplayName}
           onProfileAvatarUrlChange={setProfileAvatarUrl}
           onSaveProfile={saveProfile}
+          onRequestSignOut={() => setSignOutConfirmOpen(true)}
         />
       )}
 
@@ -677,6 +650,42 @@ function App() {
           Delete workout
         </MenuItem>
       </Menu>
+
+      <Dialog
+        open={signOutConfirmOpen}
+        onClose={() => setSignOutConfirmOpen(false)}
+        fullWidth
+        maxWidth="xs"
+        PaperProps={{
+          sx: {
+            border: '1px solid rgba(179, 149, 255, 0.4)',
+            borderRadius: 2,
+            background: 'linear-gradient(180deg, rgba(29, 21, 58, 0.96), rgba(20, 15, 43, 0.96))',
+            color: '#eef0ff',
+          },
+        }}
+      >
+        <DialogTitle>Sign out?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">You will need to sign in again to continue.</Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 2, pb: 2 }}>
+          <Button variant="outlined" onClick={() => setSignOutConfirmOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={confirmSignOut}
+            sx={{
+              bgcolor: '#d32f2f',
+              backgroundImage: 'none',
+              '&:hover': { bgcolor: '#b71c1c', backgroundImage: 'none' },
+            }}
+          >
+            Sign out
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog
         open={Boolean(deleteTarget)}
