@@ -54,6 +54,7 @@ function App() {
   const [setDrafts, setSetDrafts] = useState<SetDraft[]>(createInitialSetDraft())
 
   const [newExerciseInput, setNewExerciseInput] = useState('')
+  const [deleteTargetIndex, setDeleteTargetIndex] = useState<number | null>(null)
 
   const exerciseSuggestions = useMemo(() => {
     const term = exerciseNameInput.trim().toLowerCase()
@@ -63,6 +64,9 @@ function App() {
       .filter((name) => name.toLowerCase().includes(term))
       .slice(0, 8)
   }, [exerciseLibrary, exerciseNameInput])
+
+  const deleteTargetName =
+    deleteTargetIndex === null ? '' : (exerciseLibrary[deleteTargetIndex] ?? '')
 
   function startWorkout() {
     setActiveWorkout({
@@ -163,13 +167,24 @@ function App() {
     setExerciseLibrary((prev) => prev.map((name, i) => (i === index ? value : name)))
   }
 
-  function removeExerciseFromLibrary(index: number) {
-    setExerciseLibrary((prev) => prev.filter((_, i) => i !== index))
+  function requestDeleteExercise(index: number) {
+    setDeleteTargetIndex(index)
+  }
+
+  function confirmDeleteExercise() {
+    if (deleteTargetIndex === null) return
+
+    setExerciseLibrary((prev) => prev.filter((_, i) => i !== deleteTargetIndex))
+    setDeleteTargetIndex(null)
+  }
+
+  function cancelDeleteExercise() {
+    setDeleteTargetIndex(null)
   }
 
   return (
     <div className="app-shell">
-      <header className="topbar">
+      <header className="topbar panel">
         <h1>Gym Workout Tracker</h1>
         <nav className="tabs">
           <button
@@ -190,16 +205,14 @@ function App() {
       {activeTab === 'workout' ? (
         <main className="panel">
           {!activeWorkout ? (
-            <section>
+            <section className="stack">
               <p>No active workout session.</p>
               <button onClick={startWorkout}>Start Workout</button>
             </section>
           ) : (
             <section className="stack">
               <div className="row-between">
-                <p>
-                  Started: {new Date(activeWorkout.startedAt).toLocaleString()}
-                </p>
+                <p>Started: {new Date(activeWorkout.startedAt).toLocaleString()}</p>
                 <button className="danger" onClick={finishWorkout}>
                   Finish Workout
                 </button>
@@ -208,7 +221,7 @@ function App() {
               <div>
                 <h2>Current Exercises</h2>
                 {activeWorkout.exercises.length === 0 ? (
-                  <p>No exercises added yet.</p>
+                  <p className="muted">No exercises added yet.</p>
                 ) : (
                   <ul className="exercise-list">
                     {activeWorkout.exercises.map((exercise, idx) => (
@@ -320,13 +333,17 @@ function App() {
 
             <ul className="settings-list">
               {exerciseLibrary.map((name, index) => (
-                <li key={`${name}-${index}`}>
+                <li key={`${name}-${index}`} className="settings-item">
                   <input
+                    className="settings-input"
                     type="text"
                     value={name}
                     onChange={(e) => updateExerciseNameInLibrary(index, e.target.value)}
                   />
-                  <button className="ghost" onClick={() => removeExerciseFromLibrary(index)}>
+                  <button
+                    className="delete-inline"
+                    onClick={() => requestDeleteExercise(index)}
+                  >
                     Delete
                   </button>
                 </li>
@@ -342,11 +359,31 @@ function App() {
           <ul>
             {workoutHistory.slice(0, 3).map((workout) => (
               <li key={workout.id}>
-                {new Date(workout.startedAt).toLocaleDateString()} - {workout.exercises.length} exercise(s)
+                {new Date(workout.startedAt).toLocaleDateString()} - {workout.exercises.length}{' '}
+                exercise(s)
               </li>
             ))}
           </ul>
         </footer>
+      )}
+
+      {deleteTargetIndex !== null && (
+        <div className="modal-backdrop" onClick={cancelDeleteExercise}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <h3>Delete exercise?</h3>
+            <p>
+              This will remove <strong>{deleteTargetName}</strong> from your exercise list.
+            </p>
+            <div className="modal-actions">
+              <button className="ghost" onClick={cancelDeleteExercise}>
+                Cancel
+              </button>
+              <button className="delete-inline" onClick={confirmDeleteExercise}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
