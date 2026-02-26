@@ -1,19 +1,13 @@
 import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import {
   Alert,
-  Autocomplete,
-  Avatar,
   Box,
   Button,
-  Collapse,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  IconButton,
-  List,
-  ListItem,
   Menu,
   MenuItem,
   Paper,
@@ -21,13 +15,16 @@ import {
   Stack,
   Tab,
   Tabs,
-  TextField,
   Typography,
 } from '@mui/material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { supabase } from './lib/supabase'
 import { useAuthSession } from './features/auth/useAuthSession'
+import { AuthScreen } from './features/auth/components/AuthScreen'
 import { getProfile, upsertProfile } from './features/profile/api'
+import { SettingsTab } from './features/settings/components/SettingsTab'
+import { HistoryTab } from './features/workouts/components/HistoryTab'
+import { WorkoutTab } from './features/workouts/components/WorkoutTab'
+import type { ExerciseRow } from './types/db'
 import {
   createExercise,
   createWorkout,
@@ -39,55 +36,25 @@ import {
   insertWorkoutSets,
   listExercises,
   listWorkoutHistory,
+  updateExerciseName,
   updateWorkoutExerciseName,
   updateWorkoutSet,
-  updateExerciseName,
 } from './features/workouts/api'
-import type { ExerciseRow } from './types/db'
+import type {
+  ActiveWorkout,
+  EditableHistoryExercise,
+  SetDraft,
+  SettingsView,
+} from './features/workouts/localTypes'
+import { supabase } from './lib/supabase'
 import './App.css'
 
 type TabView = 'workout' | 'settings' | 'history'
-type SettingsView = 'menu' | 'exercise-list' | 'profile'
-
-type SetDraft = {
-  reps: string
-  weight: string
-}
-
-type CompletedSet = {
-  reps: number
-  weightKg: number
-}
-
-type LocalWorkoutExercise = {
-  name: string
-  sets: CompletedSet[]
-}
-
-type ActiveWorkout = {
-  id: string
-  startedAt: string
-  exercises: LocalWorkoutExercise[]
-}
 
 type SnackbarState = {
   open: boolean
   severity: 'success' | 'error' | 'info'
   message: string
-}
-
-type EditableSet = {
-  id: string
-  set_number: number
-  reps: string
-  weight_kg: string
-}
-
-type EditableHistoryExercise = {
-  id: string
-  exercise_name: string
-  sets: EditableSet[]
-  deleted?: boolean
 }
 
 const fieldSx = {
@@ -105,22 +72,27 @@ function App() {
   const { session, user, isLoading: authLoading } = useAuthSession()
 
   const [activeTab, setActiveTab] = useState<TabView>('workout')
+  const [settingsView, setSettingsView] = useState<SettingsView>('menu')
+
   const [activeWorkout, setActiveWorkout] = useState<ActiveWorkout | null>(null)
   const [isAddingExercise, setIsAddingExercise] = useState(false)
   const [exerciseNameInput, setExerciseNameInput] = useState('')
   const [setDrafts, setSetDrafts] = useState<SetDraft[]>(createInitialSetDraft())
+
   const [newExerciseInput, setNewExerciseInput] = useState('')
-  const [settingsView, setSettingsView] = useState<SettingsView>('menu')
-  const [profileDisplayName, setProfileDisplayName] = useState('')
-  const [profileAvatarUrl, setProfileAvatarUrl] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ExerciseRow | null>(null)
   const [exerciseEditValues, setExerciseEditValues] = useState<Record<string, string>>({})
+
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({})
   const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null)
   const [historyEdits, setHistoryEdits] = useState<Record<string, EditableHistoryExercise[]>>({})
   const [workoutMenuAnchor, setWorkoutMenuAnchor] = useState<HTMLElement | null>(null)
   const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null)
   const [cancelWorkoutConfirmOpen, setCancelWorkoutConfirmOpen] = useState(false)
+
+  const [profileDisplayName, setProfileDisplayName] = useState('')
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState('')
+
   const [snackbar, setSnackbar] = useState<SnackbarState>({
     open: false,
     severity: 'info',
@@ -311,9 +283,7 @@ function App() {
 
     try {
       await deleteWorkoutMutation.mutateAsync(workoutId)
-      if (editingWorkoutId === workoutId) {
-        setEditingWorkoutId(null)
-      }
+      if (editingWorkoutId === workoutId) setEditingWorkoutId(null)
       setHistoryEdits((prev) => {
         const next = { ...prev }
         delete next[workoutId]
@@ -374,9 +344,7 @@ function App() {
         }
 
         const cleanedName = exercise.exercise_name.trim()
-        if (!cleanedName) {
-          throw new Error('Exercise title cannot be empty.')
-        }
+        if (!cleanedName) throw new Error('Exercise title cannot be empty.')
 
         await updateWorkoutExerciseName(exercise.id, cleanedName)
 
@@ -384,12 +352,8 @@ function App() {
           const reps = Number(set.reps)
           const weight = Number(set.weight_kg)
 
-          if (!Number.isFinite(reps) || reps <= 0) {
-            throw new Error('Reps must be greater than 0.')
-          }
-          if (!Number.isFinite(weight) || weight < 0) {
-            throw new Error('Weight must be 0 or greater.')
-          }
+          if (!Number.isFinite(reps) || reps <= 0) throw new Error('Reps must be greater than 0.')
+          if (!Number.isFinite(weight) || weight < 0) throw new Error('Weight must be 0 or greater.')
 
           await updateWorkoutSet(set.id, reps, weight)
         }
@@ -411,11 +375,8 @@ function App() {
   async function handleGoogleSignIn() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: window.location.origin,
-      },
+      options: { redirectTo: window.location.origin },
     })
-
     if (error) showError(error.message)
   }
 
@@ -450,11 +411,7 @@ function App() {
   async function startWorkout() {
     try {
       const workout = await startWorkoutMutation.mutateAsync()
-      setActiveWorkout({
-        id: workout.id,
-        startedAt: workout.started_at,
-        exercises: [],
-      })
+      setActiveWorkout({ id: workout.id, startedAt: workout.started_at, exercises: [] })
       setIsAddingExercise(false)
       setExerciseNameInput('')
       setSetDrafts(createInitialSetDraft())
@@ -507,10 +464,7 @@ function App() {
       const editedIsLast = index === next.length - 1
       const lastFilled = last.reps.trim() !== '' && last.weight.trim() !== ''
 
-      if (editedIsLast && lastFilled) {
-        next.push({ reps: '', weight: last.weight.trim() })
-      }
-
+      if (editedIsLast && lastFilled) next.push({ reps: '', weight: last.weight.trim() })
       return next
     })
   }
@@ -521,12 +475,9 @@ function App() {
     const cleanedName = exerciseNameInput.trim()
     if (!cleanedName) return
 
-    const completedSets: CompletedSet[] = setDrafts
+    const completedSets = setDrafts
       .filter((set) => set.reps.trim() !== '' && set.weight.trim() !== '')
-      .map((set) => ({
-        reps: Number(set.reps),
-        weightKg: Number(set.weight),
-      }))
+      .map((set) => ({ reps: Number(set.reps), weightKg: Number(set.weight) }))
       .filter((set) => Number.isFinite(set.reps) && Number.isFinite(set.weightKg))
       .filter((set) => set.reps > 0 && set.weightKg >= 0)
 
@@ -537,22 +488,18 @@ function App() {
       const workoutExercise = await insertWorkoutExercise(activeWorkout.id, cleanedName, position)
       await insertWorkoutSets(workoutExercise.id, completedSets)
 
-      setActiveWorkout((prev) => {
-        if (!prev) return prev
-        return {
-          ...prev,
-          exercises: [...prev.exercises, { name: cleanedName, sets: completedSets }],
-        }
-      })
+      setActiveWorkout((prev) =>
+        prev
+          ? { ...prev, exercises: [...prev.exercises, { name: cleanedName, sets: completedSets }] }
+          : prev,
+      )
 
       if (!exerciseNames.some((name) => name.toLowerCase() === cleanedName.toLowerCase())) {
         try {
           await createExerciseMutation.mutateAsync(cleanedName)
         } catch (error) {
           const maybeDuplicate = error as Error & { code?: string | null }
-          if (maybeDuplicate.code !== '23505') {
-            throw error
-          }
+          if (maybeDuplicate.code !== '23505') throw error
         }
       }
 
@@ -573,8 +520,7 @@ function App() {
       await createExerciseMutation.mutateAsync(value)
       setNewExerciseInput('')
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not add exercise.'
-      showError(message)
+      showError(error instanceof Error ? error.message : 'Could not add exercise.')
     }
   }
 
@@ -586,7 +532,6 @@ function App() {
       setExerciseEditValues((prev) => ({ ...prev, [exerciseId]: previous }))
       return
     }
-
     if (current === previous) return
 
     try {
@@ -599,7 +544,6 @@ function App() {
 
   async function confirmDeleteExercise() {
     if (!deleteTarget) return
-
     try {
       await deleteExerciseMutation.mutateAsync(deleteTarget.id)
       setDeleteTarget(null)
@@ -617,23 +561,7 @@ function App() {
   }
 
   if (!session || !user) {
-    return (
-      <Box className="app-shell" sx={{ display: 'grid', placeItems: 'center', minHeight: '90vh' }}>
-        <Paper className="panel" elevation={0} sx={{ width: '100%', maxWidth: 460 }}>
-          <Stack spacing={1.2}>
-            <Typography variant="h5" sx={{ fontSize: '1.25rem', fontWeight: 700 }}>
-              Gym Workout Tracker
-            </Typography>
-            <Typography color="text.secondary">
-              Sign in to sync your workouts and exercise settings.
-            </Typography>
-            <Button variant="contained" onClick={handleGoogleSignIn}>
-              Sign in with Google
-            </Button>
-          </Stack>
-        </Paper>
-      </Box>
-    )
+    return <AuthScreen onGoogleSignIn={handleGoogleSignIn} />
   }
 
   return (
@@ -654,10 +582,7 @@ function App() {
           variant="fullWidth"
           textColor="inherit"
           indicatorColor="secondary"
-          sx={{
-            minHeight: 44,
-            '& .MuiTab-root': { minHeight: 44, fontWeight: 600 },
-          }}
+          sx={{ minHeight: 44, '& .MuiTab-root': { minHeight: 44, fontWeight: 600 } }}
         >
           <Tab value="workout" label="Workout" />
           <Tab value="history" label="History" />
@@ -666,476 +591,76 @@ function App() {
       </Paper>
 
       {activeTab === 'workout' ? (
-        <Paper className="panel" elevation={0}>
-          {!activeWorkout ? (
-            <Stack spacing={1.25}>
-              <Typography>No active workout session.</Typography>
-              <Button
-                variant="contained"
-                onClick={startWorkout}
-                disabled={startWorkoutMutation.isPending}
-              >
-                Start Workout
-              </Button>
-            </Stack>
-          ) : (
-            <Stack spacing={1.25}>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
-                <Typography>Started: {new Date(activeWorkout.startedAt).toLocaleString()}</Typography>
-                <Stack direction="row" spacing={1}>
-                  <Button
-                    variant="outlined"
-                    color="error"
-                    onClick={() => setCancelWorkoutConfirmOpen(true)}
-                    disabled={deleteWorkoutMutation.isPending}
-                  >
-                    Cancel Workout
-                  </Button>
-                  <Button
-                    variant="contained"
-                    color="error"
-                    onClick={finishWorkout}
-                    disabled={finishWorkoutMutation.isPending}
-                  >
-                    Finish Workout
-                  </Button>
-                </Stack>
-              </Stack>
-
-              <Stack spacing={0.75}>
-                <Typography variant="h6" sx={{ fontSize: '1rem' }}>
-                  Current Exercises
-                </Typography>
-                {activeWorkout.exercises.length === 0 ? (
-                  <Typography className="muted">No exercises added yet.</Typography>
-                ) : (
-                  <List disablePadding sx={{ display: 'grid', gap: 0.7 }}>
-                    {activeWorkout.exercises.map((exercise, idx) => (
-                      <ListItem key={`${exercise.name}-${idx}`} className="exercise-card" disablePadding>
-                        <Box>
-                          <Typography sx={{ fontWeight: 700 }}>{exercise.name}</Typography>
-                          <Typography variant="body2" sx={{ color: '#c2c7f1' }}>
-                            {exercise.sets
-                              .map((set) => `${set.reps} reps x ${set.weightKg} kg`)
-                              .join(' | ')}
-                          </Typography>
-                        </Box>
-                      </ListItem>
-                    ))}
-                  </List>
-                )}
-              </Stack>
-
-              {!isAddingExercise ? (
-                <Button variant="contained" onClick={openAddExercise}>
-                  Add Exercise
-                </Button>
-              ) : (
-                <Paper className="card" elevation={0}>
-                  <Typography variant="h6" sx={{ fontSize: '1rem', mb: 0.6 }}>
-                    New Exercise
-                  </Typography>
-
-                  <Autocomplete
-                    freeSolo
-                    options={exerciseNames}
-                    loading={exercisesQuery.isLoading}
-                    inputValue={exerciseNameInput}
-                    onInputChange={(_, value) => setExerciseNameInput(value)}
-                    renderInput={(params) => (
-                      <TextField {...params} label="Exercise" placeholder="Type exercise name" sx={fieldSx} />
-                    )}
-                    sx={{ mb: 0.7 }}
-                  />
-
-                  <Stack direction="row" spacing={1}>
-                    <Typography sx={{ flex: 1, fontSize: '0.8rem', color: '#c7cbf7' }}>Reps</Typography>
-                    <Typography sx={{ flex: 1, fontSize: '0.8rem', color: '#c7cbf7' }}>
-                      Weight (kg)
-                    </Typography>
-                  </Stack>
-
-                  <Stack spacing={0.7} sx={{ mb: 0.75 }}>
-                    {setDrafts.map((set, idx) => (
-                      <Stack key={`set-${idx}`} direction="row" spacing={1}>
-                        <TextField
-                          type="number"
-                          inputMode="numeric"
-                          placeholder="Reps"
-                          value={set.reps}
-                          onChange={(e) => updateSetDraft(idx, 'reps', e.target.value)}
-                          inputProps={{ min: 1 }}
-                          sx={{ ...fieldSx, flex: 1 }}
-                        />
-                        <TextField
-                          type="number"
-                          inputMode="decimal"
-                          placeholder="Weight (kg)"
-                          value={set.weight}
-                          onChange={(e) => updateSetDraft(idx, 'weight', e.target.value)}
-                          inputProps={{ min: 0, step: 0.5 }}
-                          sx={{ ...fieldSx, flex: 1 }}
-                        />
-                      </Stack>
-                    ))}
-                  </Stack>
-
-                  <Stack direction="row" spacing={1}>
-                    <Button variant="contained" onClick={finishExercise} fullWidth>
-                      Finish Exercise
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      onClick={() => {
-                        setIsAddingExercise(false)
-                        setExerciseNameInput('')
-                        setSetDrafts(createInitialSetDraft())
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  </Stack>
-                </Paper>
-              )}
-            </Stack>
-          )}
-        </Paper>
-      ) : activeTab === 'settings' ? (
-        <Paper className="panel" elevation={0}>
-          {settingsView === 'menu' ? (
-            <Stack spacing={1.25}>
-              <Button
-                variant="outlined"
-                onClick={() => setSettingsView('profile')}
-                sx={{ justifyContent: 'space-between' }}
-              >
-                Profile
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={() => setSettingsView('exercise-list')}
-                sx={{ justifyContent: 'space-between' }}
-              >
-                Exercise list
-              </Button>
-            </Stack>
-          ) : settingsView === 'exercise-list' ? (
-            <Stack spacing={1.25}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center">
-                <Typography variant="h6" sx={{ fontSize: '1rem' }}>
-                  Exercise List
-                </Typography>
-                <Button variant="outlined" size="small" onClick={() => setSettingsView('menu')}>
-                  Back
-                </Button>
-              </Stack>
-
-              <Stack direction="row" spacing={1}>
-                <TextField
-                  fullWidth
-                  placeholder="Add new exercise"
-                  value={newExerciseInput}
-                  onChange={(e) => setNewExerciseInput(e.target.value)}
-                  sx={fieldSx}
-                />
-                <Button
-                  variant="contained"
-                  onClick={addExerciseToLibrary}
-                  disabled={createExerciseMutation.isPending}
-                >
-                  Add
-                </Button>
-              </Stack>
-
-              <List disablePadding sx={{ display: 'grid', gap: 0.7 }}>
-                {exerciseLibrary.map((exercise) => (
-                  <ListItem key={exercise.id} disablePadding>
-                    <Stack direction="row" spacing={1} sx={{ width: '100%' }}>
-                      <TextField
-                        fullWidth
-                        value={exerciseEditValues[exercise.id] ?? ''}
-                        onChange={(e) =>
-                          setExerciseEditValues((prev) => ({
-                            ...prev,
-                            [exercise.id]: e.target.value,
-                          }))
-                        }
-                        onBlur={() => commitExerciseNameChange(exercise.id, exercise.name)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            event.preventDefault()
-                            ;(event.target as HTMLInputElement).blur()
-                          }
-                        }}
-                        sx={fieldSx}
-                      />
-                      <Button
-                        variant="contained"
-                        color="error"
-                        onClick={() => setDeleteTarget(exercise)}
-                        disabled={deleteExerciseMutation.isPending}
-                      >
-                        Delete
-                      </Button>
-                    </Stack>
-                  </ListItem>
-                ))}
-              </List>
-            </Stack>
-          ) : (
-            <Stack spacing={1.25}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center">
-                <Typography variant="h6" sx={{ fontSize: '1rem' }}>
-                  Profile
-                </Typography>
-                <Button variant="outlined" size="small" onClick={() => setSettingsView('menu')}>
-                  Back
-                </Button>
-              </Stack>
-              <Stack spacing={1.35} sx={{ py: 0.5 }}>
-                <Stack direction="row" spacing={1.2} alignItems="center">
-                  <Avatar
-                    src={profileAvatarUrl.trim() || undefined}
-                    alt={profileDisplayName || user.email || 'Profile avatar'}
-                    sx={{ width: 56, height: 56 }}
-                  >
-                    {(profileDisplayName || user.email || '?').charAt(0).toUpperCase()}
-                  </Avatar>
-                  <Typography variant="body2" className="muted">
-                    {profileDisplayName}
-                  </Typography>
-                </Stack>
-                <TextField
-                  label="Display name"
-                  value={profileDisplayName}
-                  onChange={(event) => setProfileDisplayName(event.target.value)}
-                  sx={{ ...fieldSx, mt: 1 }}
-                />
-                <TextField
-                  label="Profile picture URL"
-                  placeholder="https://..."
-                  value={profileAvatarUrl}
-                  onChange={(event) => setProfileAvatarUrl(event.target.value)}
-                  sx={fieldSx}
-                />
-              </Stack>
-              <Typography variant="body2">
-                <strong>Email:</strong> {user.email ?? 'Not available'}
-              </Typography>
-              <Typography variant="body2">
-                <strong>Provider:</strong>{' '}
-                {(user.app_metadata?.provider as string | undefined) ?? 'Not available'}
-              </Typography>
-              <Typography variant="body2">
-                <strong>User ID:</strong> {user.id}
-              </Typography>
-              <Typography variant="body2">
-                <strong>Created:</strong> {new Date(user.created_at).toLocaleString()}
-              </Typography>
-              <Button
-                variant="contained"
-                onClick={saveProfile}
-                disabled={upsertProfileMutation.isPending}
-              >
-                Save profile
-              </Button>
-            </Stack>
-          )}
-        </Paper>
+        <WorkoutTab
+          activeWorkout={activeWorkout}
+          isAddingExercise={isAddingExercise}
+          exerciseNameInput={exerciseNameInput}
+          setDrafts={setDrafts}
+          exerciseNames={exerciseNames}
+          exercisesLoading={exercisesQuery.isLoading}
+          fieldSx={fieldSx}
+          startWorkoutPending={startWorkoutMutation.isPending}
+          finishWorkoutPending={finishWorkoutMutation.isPending}
+          deleteWorkoutPending={deleteWorkoutMutation.isPending}
+          onStartWorkout={startWorkout}
+          onFinishWorkout={finishWorkout}
+          onOpenCancelWorkoutConfirm={() => setCancelWorkoutConfirmOpen(true)}
+          onOpenAddExercise={openAddExercise}
+          onFinishExercise={finishExercise}
+          onCancelAddExercise={() => {
+            setIsAddingExercise(false)
+            setExerciseNameInput('')
+            setSetDrafts(createInitialSetDraft())
+          }}
+          onExerciseNameInputChange={setExerciseNameInput}
+          onUpdateSetDraft={updateSetDraft}
+        />
+      ) : activeTab === 'history' ? (
+        <HistoryTab
+          isLoading={historyWorkoutsQuery.isLoading}
+          workouts={historyWorkoutsQuery.data ?? []}
+          expandedHistory={expandedHistory}
+          editingWorkoutId={editingWorkoutId}
+          historyEdits={historyEdits}
+          fieldSx={fieldSx}
+          onToggleExpanded={(workoutId) =>
+            setExpandedHistory((prev) => ({ ...prev, [workoutId]: !prev[workoutId] }))
+          }
+          onOpenWorkoutMenu={openWorkoutMenu}
+          onUpdateHistoryExerciseName={updateHistoryExerciseName}
+          onMarkHistoryExerciseDeleted={markHistoryExerciseDeleted}
+          onUpdateHistorySetField={updateHistorySetField}
+          onSaveWorkoutEdit={saveWorkoutEdit}
+          onCancelWorkoutEdit={cancelWorkoutEdit}
+        />
       ) : (
-        <Paper className="panel" elevation={0}>
-          <Stack spacing={1.25}>
-            <Typography variant="h6" sx={{ fontSize: '1rem' }}>
-              Workout History
-            </Typography>
-
-            {historyWorkoutsQuery.isLoading ? (
-              <Box sx={{ display: 'grid', placeItems: 'center', py: 2 }}>
-                <CircularProgress size={26} />
-              </Box>
-            ) : (historyWorkoutsQuery.data?.length ?? 0) === 0 ? (
-              <Typography className="muted">No completed workouts yet.</Typography>
-            ) : (
-              <List disablePadding sx={{ display: 'grid', gap: 1 }}>
-                {historyWorkoutsQuery.data!.map((workout) => {
-                  const exercises = [...(workout.workout_exercises ?? [])].sort(
-                    (a, b) => a.position - b.position,
-                  )
-                  const isExpanded = Boolean(expandedHistory[workout.id])
-                  const isEditing = editingWorkoutId === workout.id
-                  const editableExercises = historyEdits[workout.id] ?? []
-                  const visibleEditableExercises = editableExercises.filter((exercise) => !exercise.deleted)
-
-                  return (
-                    <ListItem key={workout.id} disablePadding>
-                      <Paper className="card history-workout-card" elevation={0} sx={{ width: '100%' }}>
-                        <Stack spacing={0.7}>
-                          <Stack direction="row" alignItems="center" justifyContent="space-between">
-                            <Box>
-                              <Typography sx={{ fontWeight: 700 }}>
-                                {new Date(workout.started_at).toLocaleString()}
-                              </Typography>
-                              <Typography variant="body2" className="muted">
-                                {exercises.length} exercise(s)
-                              </Typography>
-                            </Box>
-                            <Stack direction="row" spacing={0.6}>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                onClick={() =>
-                                  setExpandedHistory((prev) => ({
-                                    ...prev,
-                                    [workout.id]: !prev[workout.id],
-                                  }))
-                                }
-                              >
-                                {isExpanded ? 'Hide details' : 'Show details'}
-                              </Button>
-                              <IconButton
-                                aria-label="Workout menu"
-                                size="small"
-                                onClick={(event) => openWorkoutMenu(event, workout.id)}
-                              >
-                                <Typography sx={{ fontSize: '1.2rem', lineHeight: 1 }}>⋯</Typography>
-                              </IconButton>
-                            </Stack>
-                          </Stack>
-
-                          <Collapse in={isExpanded} timeout="auto" unmountOnExit>
-                            <List disablePadding sx={{ display: 'grid', gap: 0.6, pt: 0.4 }}>
-                              {isEditing
-                                ? visibleEditableExercises.map((exercise) => (
-                                    <ListItem
-                                      key={exercise.id}
-                                      disablePadding
-                                      className="exercise-card history-exercise-card"
-                                      sx={{ p: 0.6 }}
-                                    >
-                                      <Stack spacing={0.55} sx={{ width: '100%' }}>
-                                        <Stack direction="row" spacing={0.7}>
-                                          <TextField
-                                            fullWidth
-                                            size="small"
-                                            value={exercise.exercise_name}
-                                            onChange={(event) =>
-                                              updateHistoryExerciseName(
-                                                workout.id,
-                                                exercise.id,
-                                                event.target.value,
-                                              )
-                                            }
-                                            sx={fieldSx}
-                                          />
-                                          <Button
-                                            size="small"
-                                            variant="outlined"
-                                            color="error"
-                                            onClick={() =>
-                                              markHistoryExerciseDeleted(workout.id, exercise.id)
-                                            }
-                                          >
-                                            Delete
-                                          </Button>
-                                        </Stack>
-                                        {exercise.sets.map((set) => (
-                                          <Stack key={set.id} direction="row" spacing={0.7}>
-                                            <TextField
-                                              size="small"
-                                              type="number"
-                                              inputMode="numeric"
-                                              label={`Set ${set.set_number} reps`}
-                                              value={set.reps}
-                                              onChange={(event) =>
-                                                updateHistorySetField(
-                                                  workout.id,
-                                                  exercise.id,
-                                                  set.id,
-                                                  'reps',
-                                                  event.target.value,
-                                                )
-                                              }
-                                              sx={{ ...fieldSx, flex: 1 }}
-                                            />
-                                            <TextField
-                                              size="small"
-                                              type="number"
-                                              inputMode="decimal"
-                                              label={`Set ${set.set_number} kg`}
-                                              value={set.weight_kg}
-                                              onChange={(event) =>
-                                                updateHistorySetField(
-                                                  workout.id,
-                                                  exercise.id,
-                                                  set.id,
-                                                  'weight_kg',
-                                                  event.target.value,
-                                                )
-                                              }
-                                              sx={{ ...fieldSx, flex: 1 }}
-                                            />
-                                          </Stack>
-                                        ))}
-                                      </Stack>
-                                    </ListItem>
-                                  ))
-                                : exercises.map((exercise) => {
-                                    const sets = [...(exercise.workout_sets ?? [])].sort(
-                                      (a, b) => a.set_number - b.set_number,
-                                    )
-
-                                    return (
-                                      <ListItem
-                                        key={exercise.id}
-                                        disablePadding
-                                        className="exercise-card history-exercise-card"
-                                        sx={{ p: 0.6 }}
-                                      >
-                                        <Stack spacing={0.45} sx={{ width: '100%' }}>
-                                          <Typography sx={{ fontWeight: 700 }}>
-                                            {exercise.exercise_name}
-                                          </Typography>
-                                          {sets.map((set) => (
-                                            <Typography key={set.id} variant="body2" className="muted">
-                                              Set {set.set_number}: {set.reps} reps x {set.weight_kg} kg
-                                            </Typography>
-                                          ))}
-                                        </Stack>
-                                      </ListItem>
-                                    )
-                                  })}
-                            </List>
-                            {isEditing && (
-                              <Stack direction="row" spacing={0.8} sx={{ pt: 0.7 }}>
-                                <Button
-                                  size="small"
-                                  variant="contained"
-                                  onClick={() => saveWorkoutEdit(workout.id)}
-                                >
-                                  Save changes
-                                </Button>
-                                <Button size="small" variant="outlined" onClick={cancelWorkoutEdit}>
-                                  Cancel
-                                </Button>
-                              </Stack>
-                            )}
-                          </Collapse>
-                        </Stack>
-                      </Paper>
-                    </ListItem>
-                  )
-                })}
-              </List>
-            )}
-          </Stack>
-        </Paper>
+        <SettingsTab
+          settingsView={settingsView}
+          exerciseLibrary={exerciseLibrary}
+          exerciseEditValues={exerciseEditValues}
+          profileDisplayName={profileDisplayName}
+          profileAvatarUrl={profileAvatarUrl}
+          fieldSx={fieldSx}
+          createExercisePending={createExerciseMutation.isPending}
+          deleteExercisePending={deleteExerciseMutation.isPending}
+          upsertProfilePending={upsertProfileMutation.isPending}
+          newExerciseInput={newExerciseInput}
+          user={user}
+          onSettingsViewChange={setSettingsView}
+          onNewExerciseInputChange={setNewExerciseInput}
+          onAddExerciseToLibrary={addExerciseToLibrary}
+          onExerciseEditValueChange={(exerciseId, value) =>
+            setExerciseEditValues((prev) => ({ ...prev, [exerciseId]: value }))
+          }
+          onExerciseEditCommit={commitExerciseNameChange}
+          onExerciseDeleteRequest={setDeleteTarget}
+          onProfileDisplayNameChange={setProfileDisplayName}
+          onProfileAvatarUrlChange={setProfileAvatarUrl}
+          onSaveProfile={saveProfile}
+        />
       )}
 
-      <Menu
-        anchorEl={workoutMenuAnchor}
-        open={Boolean(workoutMenuAnchor)}
-        onClose={closeWorkoutMenu}
-      >
+      <Menu anchorEl={workoutMenuAnchor} open={Boolean(workoutMenuAnchor)} onClose={closeWorkoutMenu}>
         <MenuItem
           onClick={() => {
             if (selectedWorkoutId) beginWorkoutEdit(selectedWorkoutId)
@@ -1145,9 +670,7 @@ function App() {
         </MenuItem>
         <MenuItem
           onClick={() => {
-            if (selectedWorkoutId) {
-              void removeWorkoutFromHistory(selectedWorkoutId)
-            }
+            if (selectedWorkoutId) void removeWorkoutFromHistory(selectedWorkoutId)
           }}
           sx={{ color: '#ff8ea6' }}
         >
