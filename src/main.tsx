@@ -41,7 +41,6 @@ const theme = createTheme({
         body: {
           background:
             'radial-gradient(100% 140% at 8% -10%, rgba(111, 77, 204, 0.42), transparent 40%), radial-gradient(120% 120% at 100% 0%, rgba(59, 108, 171, 0.3), transparent 44%), linear-gradient(170deg, #070914, #0f1330 45%, #15183b 100%)',
-          backgroundAttachment: 'fixed',
         },
       },
     },
