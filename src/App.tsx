@@ -23,6 +23,7 @@ import { AuthScreen } from './features/auth/components/AuthScreen'
 import { getProfile, upsertProfile } from './features/profile/api'
 import { SettingsTab } from './features/settings/components/SettingsTab'
 import { HistoryTab } from './features/workouts/components/HistoryTab'
+import { ProgressTab } from './features/workouts/components/ProgressTab'
 import { WorkoutTab } from './features/workouts/components/WorkoutTab'
 import type { ExerciseRow } from './types/db'
 import {
@@ -49,7 +50,7 @@ import { DEFAULT_EXERCISE_NAMES } from './features/workouts/defaultExercises'
 import { supabase } from './lib/supabase'
 import './App.css'
 
-type TabView = 'workout' | 'settings' | 'history'
+type TabView = 'workout' | 'progress' | 'settings' | 'history'
 
 type SnackbarState = {
   open: boolean
@@ -561,6 +562,7 @@ function App() {
           sx={{ minHeight: 44, '& .MuiTab-root': { minHeight: 44, fontWeight: 600 } }}
         >
           <Tab value="workout" label="Workout" />
+          <Tab value="progress" label="Progress" />
           <Tab value="history" label="History" />
           <Tab value="settings" label="Settings" />
         </Tabs>
@@ -591,6 +593,8 @@ function App() {
           onExerciseNameInputChange={setExerciseNameInput}
           onUpdateSetDraft={updateSetDraft}
         />
+      ) : activeTab === 'progress' ? (
+        <ProgressTab isLoading={historyWorkoutsQuery.isLoading} workouts={historyWorkoutsQuery.data ?? []} />
       ) : activeTab === 'history' ? (
         <HistoryTab
           isLoading={historyWorkoutsQuery.isLoading}
