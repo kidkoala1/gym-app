@@ -9,7 +9,13 @@ export interface ProfileRow {
   id: string
   display_name: string | null
   avatar_url: string | null
+  is_progress_public?: boolean
   created_at: string
+}
+
+export interface PublicProfileRow {
+  id: string
+  display_name: string
 }
 
 export interface WorkoutRow {
@@ -66,4 +72,11 @@ export interface WorkoutHistoryRow {
 export interface WorkoutSetInput {
   reps: number
   weightKg: number
+}
+
+export interface ProgressSeriesRow {
+  bucket_date: string
+  max_weight: number
+  total_volume: number
+  total_reps: number
 }

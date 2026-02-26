@@ -1,4 +1,4 @@
-import { Avatar, Button, List, ListItem, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Avatar, Button, FormControlLabel, List, ListItem, Paper, Stack, Switch, TextField, Typography } from '@mui/material'
 import type { User } from '@supabase/supabase-js'
 import type { ExerciseRow } from '../../../types/db'
 import type { SettingsView } from '../../workouts/localTypes'
@@ -9,6 +9,7 @@ type SettingsTabProps = {
   exerciseLibrary: ExerciseRow[]
   profileDisplayName: string
   profileAvatarUrl: string
+  isProgressPublic: boolean
   fieldSx: object
   createExercisePending: boolean
   deleteExercisePending: boolean
@@ -21,6 +22,7 @@ type SettingsTabProps = {
   onExerciseDeleteRequest: (exercise: ExerciseRow) => void
   onProfileDisplayNameChange: (value: string) => void
   onProfileAvatarUrlChange: (value: string) => void
+  onIsProgressPublicChange: (value: boolean) => void
   onSaveProfile: () => void
   onRequestSignOut: () => void
 }
@@ -31,6 +33,7 @@ export function SettingsTab({
   exerciseLibrary,
   profileDisplayName,
   profileAvatarUrl,
+  isProgressPublic,
   fieldSx,
   createExercisePending,
   deleteExercisePending,
@@ -43,6 +46,7 @@ export function SettingsTab({
   onExerciseDeleteRequest,
   onProfileDisplayNameChange,
   onProfileAvatarUrlChange,
+  onIsProgressPublicChange,
   onSaveProfile,
   onRequestSignOut,
 }: SettingsTabProps) {
@@ -180,6 +184,16 @@ export function SettingsTab({
                 value={profileAvatarUrl}
                 onChange={(event) => onProfileAvatarUrlChange(event.target.value)}
                 sx={fieldSx}
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={isProgressPublic}
+                    onChange={(event) => onIsProgressPublicChange(event.target.checked)}
+                  />
+                }
+                label="Public progress (allow others to compare with you)"
+                sx={{ m: 0 }}
               />
             </Stack>
             <Typography variant="body2">

@@ -93,6 +93,7 @@ function App() {
 
   const [profileDisplayName, setProfileDisplayName] = useState('')
   const [profileAvatarUrl, setProfileAvatarUrl] = useState('')
+  const [isProgressPublic, setIsProgressPublic] = useState(false)
 
   const [snackbar, setSnackbar] = useState<SnackbarState>({
     open: false,
@@ -143,6 +144,7 @@ function App() {
 
     setProfileDisplayName(profileQuery.data?.display_name ?? metadataDisplay)
     setProfileAvatarUrl(profileQuery.data?.avatar_url ?? metadataAvatar)
+    setIsProgressPublic(Boolean(profileQuery.data?.is_progress_public))
   }, [profileQuery.data, user?.id, user?.user_metadata])
 
   useEffect(() => {
@@ -199,12 +201,13 @@ function App() {
   })
 
   const upsertProfileMutation = useMutation({
-    mutationFn: async (payload: { displayName: string; avatarUrl: string }) => {
+    mutationFn: async (payload: { displayName: string; avatarUrl: string; isProgressPublic: boolean }) => {
       if (!user) throw new Error('You need to be signed in.')
       return upsertProfile(
         user.id,
         payload.displayName.trim() || null,
         payload.avatarUrl.trim() || null,
+        payload.isProgressPublic,
       )
     },
     onSuccess: async () => {
@@ -386,6 +389,7 @@ function App() {
     setSetDrafts(createInitialSetDraft())
     setProfileDisplayName('')
     setProfileAvatarUrl('')
+    setIsProgressPublic(false)
     showSuccess('Signed out.')
   }
 
@@ -399,6 +403,7 @@ function App() {
       await upsertProfileMutation.mutateAsync({
         displayName: profileDisplayName,
         avatarUrl: profileAvatarUrl,
+        isProgressPublic,
       })
       showSuccess('Profile updated.')
     } catch (error) {
@@ -594,7 +599,11 @@ function App() {
           onUpdateSetDraft={updateSetDraft}
         />
       ) : activeTab === 'progress' ? (
-        <ProgressTab isLoading={historyWorkoutsQuery.isLoading} workouts={historyWorkoutsQuery.data ?? []} />
+        <ProgressTab
+          isLoading={historyWorkoutsQuery.isLoading}
+          workouts={historyWorkoutsQuery.data ?? []}
+          userId={user.id}
+        />
       ) : activeTab === 'history' ? (
         <HistoryTab
           isLoading={historyWorkoutsQuery.isLoading}
@@ -620,6 +629,7 @@ function App() {
           exerciseLibrary={exerciseLibrary}
           profileDisplayName={profileDisplayName}
           profileAvatarUrl={profileAvatarUrl}
+          isProgressPublic={isProgressPublic}
           fieldSx={fieldSx}
           createExercisePending={createExerciseMutation.isPending}
           deleteExercisePending={deleteExerciseMutation.isPending}
@@ -632,6 +642,7 @@ function App() {
           onExerciseDeleteRequest={setDeleteTarget}
           onProfileDisplayNameChange={setProfileDisplayName}
           onProfileAvatarUrlChange={setProfileAvatarUrl}
+          onIsProgressPublicChange={setIsProgressPublic}
           onSaveProfile={saveProfile}
           onRequestSignOut={() => setSignOutConfirmOpen(true)}
         />

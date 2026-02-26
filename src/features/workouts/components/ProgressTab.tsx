@@ -1,17 +1,29 @@
 import { Box, Button, CircularProgress, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
+import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
+import { getProgressSeries, searchPublicProfiles } from '../api'
 import type { WorkoutHistoryRow } from '../../../types/db'
 
 type ProgressTabProps = {
   isLoading: boolean
   workouts: WorkoutHistoryRow[]
+  userId: string
 }
 
 type RangeKey = '30d' | '90d' | '365d' | 'all'
+type ModeKey = 'mine' | 'compare'
 
 type SeriesPoint = {
+  dateKey: string
   dateLabel: string
   value: number
+}
+
+type CombinedSeriesPoint = {
+  dateKey: string
+  dateLabel: string
+  primary?: number
+  secondary?: number
 }
 
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string }> = [
@@ -32,16 +44,48 @@ function getRangeCutoff(range: RangeKey): number | null {
   return now - days * 24 * 60 * 60 * 1000
 }
 
-function LineChart({
+function getRangeDays(range: RangeKey): number | null {
+  if (range === 'all') return null
+  return range === '30d' ? 30 : range === '90d' ? 90 : 365
+}
+
+function combineSeries(primary: SeriesPoint[], secondary: SeriesPoint[]): CombinedSeriesPoint[] {
+  const allKeys = new Set([...primary.map((point) => point.dateKey), ...secondary.map((point) => point.dateKey)])
+  const primaryByKey = new Map(primary.map((point) => [point.dateKey, point]))
+  const secondaryByKey = new Map(secondary.map((point) => [point.dateKey, point]))
+
+  return [...allKeys]
+    .sort((a, b) => a.localeCompare(b))
+    .map((dateKey) => {
+      const primaryPoint = primaryByKey.get(dateKey)
+      const secondaryPoint = secondaryByKey.get(dateKey)
+
+      return {
+        dateKey,
+        dateLabel: primaryPoint?.dateLabel ?? secondaryPoint?.dateLabel ?? formatDateLabel(dateKey),
+        primary: primaryPoint?.value,
+        secondary: secondaryPoint?.value,
+      }
+    })
+}
+
+function CompareLineChart({
   title,
   unit,
   points,
+  primaryLabel,
+  secondaryLabel,
 }: {
   title: string
   unit: string
-  points: SeriesPoint[]
+  points: CombinedSeriesPoint[]
+  primaryLabel: string
+  secondaryLabel?: string
 }) {
-  if (points.length === 0) {
+  const [activePointIndex, setActivePointIndex] = useState(0)
+  const values = points.flatMap((point) => [point.primary, point.secondary]).filter((value): value is number => typeof value === 'number')
+
+  if (values.length === 0) {
     return (
       <Paper className="card" elevation={0}>
         <Typography sx={{ fontWeight: 700, mb: 0.5 }}>{title}</Typography>
@@ -58,11 +102,11 @@ function LineChart({
   const rightPadding = 14
   const topPadding = 10
   const bottomPadding = 16
-  const min = Math.min(...points.map((p) => p.value))
-  const max = Math.max(...points.map((p) => p.value))
+  const min = Math.min(...values)
+  const max = Math.max(...values)
   const spread = max - min || 1
   const mid = min + spread / 2
-  const [activePointIndex, setActivePointIndex] = useState(points.length - 1)
+  const safeActiveIndex = activePointIndex < points.length ? activePointIndex : points.length - 1
 
   const toX = (index: number) => {
     if (points.length === 1) return width / 2
@@ -74,19 +118,36 @@ function LineChart({
     return height - bottomPadding - ratio * (height - topPadding - bottomPadding)
   }
 
-  const polyline = points.map((point, index) => `${toX(index)},${toY(point.value)}`).join(' ')
-  const latest = points[points.length - 1]
-  const activePoint = points[activePointIndex] ?? latest
+  const buildPolyline = (key: 'primary' | 'secondary') =>
+    points
+      .map((point, index) =>
+        typeof point[key] === 'number' ? `${toX(index)},${toY(point[key])}` : null,
+      )
+      .filter((value): value is string => Boolean(value))
+      .join(' ')
+
+  const primaryLine = buildPolyline('primary')
+  const secondaryLine = buildPolyline('secondary')
+  const selected = points[safeActiveIndex] ?? points[points.length - 1]
+  const step = points.length > 1 ? (width - leftPadding - rightPadding) / (points.length - 1) : 28
 
   return (
     <Paper className="card" elevation={0}>
       <Stack spacing={0.35}>
         <Typography sx={{ fontWeight: 700 }}>{title}</Typography>
-        <Typography variant="body2" className="muted">
-          Latest: {latest.value.toFixed(1)} {unit}
-        </Typography>
+        <Stack direction="row" spacing={1.2}>
+          <Typography variant="caption" sx={{ color: '#8ec5ff' }}>
+            {primaryLabel}
+          </Typography>
+          {secondaryLabel ? (
+            <Typography variant="caption" sx={{ color: '#ffae86' }}>
+              {secondaryLabel}
+            </Typography>
+          ) : null}
+        </Stack>
         <Typography variant="body2" sx={{ color: '#f0f4ff' }}>
-          Selected: {activePoint.value.toFixed(1)} {unit} on {activePoint.dateLabel}
+          Selected ({selected.dateLabel}): {primaryLabel} {selected.primary?.toFixed(1) ?? '-'} {unit}
+          {secondaryLabel ? ` | ${secondaryLabel} ${selected.secondary?.toFixed(1) ?? '-'} ${unit}` : ''}
         </Typography>
       </Stack>
       <Box sx={{ mt: 0.8 }}>
@@ -116,38 +177,61 @@ function LineChart({
             y2={height - bottomPadding}
             stroke="rgba(201, 207, 255, 0.35)"
           />
-          <polyline
-            fill="none"
-            stroke="#8ec5ff"
-            strokeWidth="2.5"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            points={polyline}
-          />
+          {primaryLine ? (
+            <polyline
+              fill="none"
+              stroke="#8ec5ff"
+              strokeWidth="2.5"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              points={primaryLine}
+            />
+          ) : null}
+          {secondaryLine ? (
+            <polyline
+              fill="none"
+              stroke="#ffae86"
+              strokeWidth="2.5"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              points={secondaryLine}
+            />
+          ) : null}
           {points.map((point, index) => (
-            <g key={`${point.dateLabel}-${index}`}>
-              <circle
-                cx={toX(index)}
-                cy={toY(point.value)}
-                r="10"
+            <g key={`${point.dateKey}-${index}`}>
+              <rect
+                x={toX(index) - step / 2}
+                y={topPadding}
+                width={step}
+                height={height - topPadding - bottomPadding}
                 fill="transparent"
-                onMouseEnter={() => setActivePointIndex(index)}
                 onClick={() => setActivePointIndex(index)}
+                onMouseEnter={() => setActivePointIndex(index)}
               />
-              <circle
-                cx={toX(index)}
-                cy={toY(point.value)}
-                r={activePointIndex === index ? '4' : '2.8'}
-                fill={activePointIndex === index ? '#ffffff' : '#d9ebff'}
-              />
+              {typeof point.primary === 'number' ? (
+                <circle
+                  cx={toX(index)}
+                  cy={toY(point.primary)}
+                  r={safeActiveIndex === index ? 4 : 2.8}
+                  fill="#d9ebff"
+                />
+              ) : null}
+              {typeof point.secondary === 'number' ? (
+                <circle
+                  cx={toX(index)}
+                  cy={toY(point.secondary)}
+                  r={safeActiveIndex === index ? 4 : 2.8}
+                  fill="#ffd3bd"
+                />
+              ) : null}
             </g>
           ))}
           <line
-            x1={toX(activePointIndex)}
+            x1={toX(safeActiveIndex)}
             y1={topPadding}
-            x2={toX(activePointIndex)}
+            x2={toX(safeActiveIndex)}
             y2={height - bottomPadding}
-            stroke="rgba(142, 197, 255, 0.35)"
+            stroke="rgba(255, 255, 255, 0.22)"
           />
         </svg>
       </Box>
@@ -163,7 +247,7 @@ function LineChart({
   )
 }
 
-export function ProgressTab({ isLoading, workouts }: ProgressTabProps) {
+export function ProgressTab({ isLoading, workouts, userId }: ProgressTabProps) {
   const exerciseNames = useMemo(() => {
     const set = new Set<string>()
     workouts.forEach((workout) => {
@@ -177,10 +261,30 @@ export function ProgressTab({ isLoading, workouts }: ProgressTabProps) {
 
   const [selectedExercise, setSelectedExercise] = useState('')
   const [range, setRange] = useState<RangeKey>('90d')
-
+  const [mode, setMode] = useState<ModeKey>('mine')
+  const [selectedCompareUserId, setSelectedCompareUserId] = useState('')
   const activeExercise = selectedExercise || exerciseNames[0] || ''
+  const rangeDays = getRangeDays(range)
 
-  const filteredWorkouts = useMemo(() => {
+  const profilesQuery = useQuery({
+    queryKey: ['public-profiles'],
+    queryFn: () => searchPublicProfiles(''),
+    enabled: mode === 'compare',
+  })
+
+  const compareProfiles = useMemo(
+    () => (profilesQuery.data ?? []).filter((profile) => profile.id !== userId),
+    [profilesQuery.data, userId],
+  )
+  const effectiveCompareUserId = selectedCompareUserId || compareProfiles[0]?.id || ''
+
+  const compareSeriesQuery = useQuery({
+    queryKey: ['progress-compare', effectiveCompareUserId, activeExercise, rangeDays],
+    queryFn: () => getProgressSeries(effectiveCompareUserId, activeExercise, rangeDays),
+    enabled: mode === 'compare' && Boolean(effectiveCompareUserId) && Boolean(activeExercise),
+  })
+
+  const filteredMine = useMemo(() => {
     if (!activeExercise) return []
     const cutoff = getRangeCutoff(range)
 
@@ -200,9 +304,10 @@ export function ProgressTab({ isLoading, workouts }: ProgressTabProps) {
         const maxWeight = Math.max(...sets.map((set) => set.weight_kg))
         const totalVolume = sets.reduce((sum, set) => sum + set.reps * set.weight_kg, 0)
         const totalReps = sets.reduce((sum, set) => sum + set.reps, 0)
+        const dateKey = new Date(workout.started_at).toISOString()
 
         return {
-          startedAt: workout.started_at,
+          dateKey,
           dateLabel: formatDateLabel(workout.started_at),
           maxWeight,
           totalVolume,
@@ -210,24 +315,59 @@ export function ProgressTab({ isLoading, workouts }: ProgressTabProps) {
         }
       })
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-      .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime())
+      .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
   }, [activeExercise, range, workouts])
 
-  const maxWeightSeries = filteredWorkouts.map((entry) => ({
+  const mineMaxWeightSeries: SeriesPoint[] = filteredMine.map((entry) => ({
+    dateKey: entry.dateKey,
     dateLabel: entry.dateLabel,
     value: entry.maxWeight,
   }))
-  const volumeSeries = filteredWorkouts.map((entry) => ({
+  const mineVolumeSeries: SeriesPoint[] = filteredMine.map((entry) => ({
+    dateKey: entry.dateKey,
     dateLabel: entry.dateLabel,
     value: entry.totalVolume,
   }))
-  const repsSeries = filteredWorkouts.map((entry) => ({
+  const mineRepsSeries: SeriesPoint[] = filteredMine.map((entry) => ({
+    dateKey: entry.dateKey,
     dateLabel: entry.dateLabel,
     value: entry.totalReps,
   }))
 
-  const bestWeight = maxWeightSeries.length > 0 ? Math.max(...maxWeightSeries.map((p) => p.value)) : 0
-  const totalVolume = volumeSeries.reduce((sum, point) => sum + point.value, 0)
+  const compareRows = compareSeriesQuery.data ?? []
+  const compareMaxWeightSeries: SeriesPoint[] = compareRows.map((entry) => ({
+    dateKey: entry.bucket_date,
+    dateLabel: formatDateLabel(entry.bucket_date),
+    value: Number(entry.max_weight),
+  }))
+  const compareVolumeSeries: SeriesPoint[] = compareRows.map((entry) => ({
+    dateKey: entry.bucket_date,
+    dateLabel: formatDateLabel(entry.bucket_date),
+    value: Number(entry.total_volume),
+  }))
+  const compareRepsSeries: SeriesPoint[] = compareRows.map((entry) => ({
+    dateKey: entry.bucket_date,
+    dateLabel: formatDateLabel(entry.bucket_date),
+    value: Number(entry.total_reps),
+  }))
+
+  const maxWeightPoints = combineSeries(
+    mineMaxWeightSeries,
+    mode === 'compare' ? compareMaxWeightSeries : [],
+  )
+  const volumePoints = combineSeries(
+    mineVolumeSeries,
+    mode === 'compare' ? compareVolumeSeries : [],
+  )
+  const repsPoints = combineSeries(
+    mineRepsSeries,
+    mode === 'compare' ? compareRepsSeries : [],
+  )
+
+  const bestWeightMine = mineMaxWeightSeries.length > 0 ? Math.max(...mineMaxWeightSeries.map((p) => p.value)) : 0
+  const bestWeightCompare =
+    compareMaxWeightSeries.length > 0 ? Math.max(...compareMaxWeightSeries.map((p) => p.value)) : 0
+  const selectedCompareUser = compareProfiles.find((profile) => profile.id === effectiveCompareUserId)
 
   return (
     <Paper className="panel" elevation={0}>
@@ -244,6 +384,23 @@ export function ProgressTab({ isLoading, workouts }: ProgressTabProps) {
           <Typography className="muted">No completed workout data yet. Finish workouts to see progress.</Typography>
         ) : (
           <>
+            <Stack direction="row" spacing={0.6}>
+              <Button
+                size="small"
+                variant={mode === 'mine' ? 'contained' : 'outlined'}
+                onClick={() => setMode('mine')}
+              >
+                Mine
+              </Button>
+              <Button
+                size="small"
+                variant={mode === 'compare' ? 'contained' : 'outlined'}
+                onClick={() => setMode('compare')}
+              >
+                Compare
+              </Button>
+            </Stack>
+
             <TextField
               select
               label="Exercise"
@@ -257,6 +414,32 @@ export function ProgressTab({ isLoading, workouts }: ProgressTabProps) {
                 </MenuItem>
               ))}
             </TextField>
+
+            {mode === 'compare' ? (
+              profilesQuery.isLoading ? (
+                <Typography variant="body2" className="muted">
+                  Loading public users...
+                </Typography>
+              ) : compareProfiles.length === 0 ? (
+                <Typography variant="body2" className="muted">
+                  No public users available to compare yet.
+                </Typography>
+              ) : (
+                <TextField
+                  select
+                  label="Compare With"
+                  value={effectiveCompareUserId}
+                  onChange={(event) => setSelectedCompareUserId(event.target.value)}
+                  size="small"
+                >
+                  {compareProfiles.map((profile) => (
+                    <MenuItem key={profile.id} value={profile.id}>
+                      {profile.display_name || 'User'}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              )
+            ) : null}
 
             <Stack direction="row" spacing={0.6}>
               {RANGE_OPTIONS.map((option) => {
@@ -277,27 +460,53 @@ export function ProgressTab({ isLoading, workouts }: ProgressTabProps) {
             <Stack direction="row" spacing={0.7}>
               <Paper className="card" elevation={0} sx={{ flex: 1, p: 0.7 }}>
                 <Typography variant="caption" className="muted">
-                  Best weight
+                  Your best weight
                 </Typography>
-                <Typography sx={{ fontWeight: 700 }}>{bestWeight.toFixed(1)} kg</Typography>
+                <Typography sx={{ fontWeight: 700 }}>{bestWeightMine.toFixed(1)} kg</Typography>
               </Paper>
+              {mode === 'compare' ? (
+                <Paper className="card" elevation={0} sx={{ flex: 1, p: 0.7 }}>
+                  <Typography variant="caption" className="muted">
+                    {selectedCompareUser?.display_name || 'User'} best
+                  </Typography>
+                  <Typography sx={{ fontWeight: 700 }}>{bestWeightCompare.toFixed(1)} kg</Typography>
+                </Paper>
+              ) : null}
               <Paper className="card" elevation={0} sx={{ flex: 1, p: 0.7 }}>
                 <Typography variant="caption" className="muted">
-                  Total volume
+                  Your sessions
                 </Typography>
-                <Typography sx={{ fontWeight: 700 }}>{totalVolume.toFixed(0)} kg</Typography>
-              </Paper>
-              <Paper className="card" elevation={0} sx={{ flex: 1, p: 0.7 }}>
-                <Typography variant="caption" className="muted">
-                  Sessions
-                </Typography>
-                <Typography sx={{ fontWeight: 700 }}>{filteredWorkouts.length}</Typography>
+                <Typography sx={{ fontWeight: 700 }}>{filteredMine.length}</Typography>
               </Paper>
             </Stack>
 
-            <LineChart title="Max Weight Trend" unit="kg" points={maxWeightSeries} />
-            <LineChart title="Volume Trend" unit="kg" points={volumeSeries} />
-            <LineChart title="Total Reps Trend" unit="reps" points={repsSeries} />
+            {mode === 'compare' && compareSeriesQuery.isLoading ? (
+              <Typography variant="body2" className="muted">
+                Loading compare data...
+              </Typography>
+            ) : null}
+
+            <CompareLineChart
+              title="Max Weight Trend"
+              unit="kg"
+              points={maxWeightPoints}
+              primaryLabel="You"
+              secondaryLabel={mode === 'compare' ? selectedCompareUser?.display_name || 'User' : undefined}
+            />
+            <CompareLineChart
+              title="Volume Trend"
+              unit="kg"
+              points={volumePoints}
+              primaryLabel="You"
+              secondaryLabel={mode === 'compare' ? selectedCompareUser?.display_name || 'User' : undefined}
+            />
+            <CompareLineChart
+              title="Total Reps Trend"
+              unit="reps"
+              points={repsPoints}
+              primaryLabel="You"
+              secondaryLabel={mode === 'compare' ? selectedCompareUser?.display_name || 'User' : undefined}
+            />
           </>
         )}
       </Stack>

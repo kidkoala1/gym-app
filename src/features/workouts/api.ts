@@ -7,6 +7,8 @@ import type {
   WorkoutExerciseRow,
   WorkoutHistoryRow,
   WorkoutWithExerciseRefs,
+  ProgressSeriesRow,
+  PublicProfileRow,
 } from '../../types/db'
 
 function throwSupabaseError(error: { message: string; code?: string | null }) {
@@ -189,4 +191,26 @@ export async function listWorkoutHistory(userId: string): Promise<WorkoutHistory
 
   if (error) throwSupabaseError(error)
   return (data ?? []) as WorkoutHistoryRow[]
+}
+
+export async function getProgressSeries(
+  targetUserId: string,
+  targetExercise: string,
+  rangeDays: number | null,
+): Promise<ProgressSeriesRow[]> {
+  const { data, error } = await supabase.rpc('get_progress_series', {
+    target_user_id: targetUserId,
+    target_exercise: targetExercise,
+    range_days: rangeDays,
+  })
+
+  if (error) throwSupabaseError(error)
+  return (data ?? []) as ProgressSeriesRow[]
+}
+
+export async function searchPublicProfiles(query: string): Promise<PublicProfileRow[]> {
+  const { data, error } = await supabase.rpc('search_public_profiles', { q: query })
+
+  if (error) throwSupabaseError(error)
+  return (data ?? []) as PublicProfileRow[]
 }
