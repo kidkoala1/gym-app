@@ -59,7 +59,7 @@ type SnackbarState = {
 
 const fieldSx = {
   '& .MuiInputBase-root': {
-    fontSize: '0.95rem',
+    fontSize: '16px',
   },
 }
 

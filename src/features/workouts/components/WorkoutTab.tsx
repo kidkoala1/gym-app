@@ -139,7 +139,7 @@ export function WorkoutTab({
                 {setDrafts.map((set, idx) => (
                   <Stack key={`set-${idx}`} direction="row" spacing={1}>
                     <TextField
-                      type="number"
+                      type="text"
                       inputMode="numeric"
                       placeholder="Reps"
                       value={set.reps}
@@ -148,7 +148,7 @@ export function WorkoutTab({
                       sx={{ ...fieldSx, flex: 1 }}
                     />
                     <TextField
-                      type="number"
+                      type="text"
                       inputMode="decimal"
                       placeholder="Weight (kg)"
                       value={set.weight}

@@ -146,7 +146,7 @@ export function HistoryTab({
                                       <Stack key={set.id} direction="row" spacing={0.7}>
                                         <TextField
                                           size="small"
-                                          type="number"
+                                          type="text"
                                           inputMode="numeric"
                                           label={`Set ${set.set_number} reps`}
                                           value={set.reps}
@@ -163,7 +163,7 @@ export function HistoryTab({
                                         />
                                         <TextField
                                           size="small"
-                                          type="number"
+                                          type="text"
                                           inputMode="decimal"
                                           label={`Set ${set.set_number} kg`}
                                           value={set.weight_kg}
