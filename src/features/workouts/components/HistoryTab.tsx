@@ -147,7 +147,6 @@ export function HistoryTab({
                                         <TextField
                                           size="small"
                                           type="text"
-                                          inputMode="numeric"
                                           label={`Set ${set.set_number} reps`}
                                           value={set.reps}
                                           onChange={(event) =>
@@ -159,12 +158,12 @@ export function HistoryTab({
                                               event.target.value,
                                             )
                                           }
+                                          inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
                                           sx={{ ...fieldSx, flex: 1 }}
                                         />
                                         <TextField
                                           size="small"
                                           type="text"
-                                          inputMode="decimal"
                                           label={`Set ${set.set_number} kg`}
                                           value={set.weight_kg}
                                           onChange={(event) =>
@@ -176,6 +175,10 @@ export function HistoryTab({
                                               event.target.value,
                                             )
                                           }
+                                          inputProps={{
+                                            inputMode: 'decimal',
+                                            pattern: '[0-9]*[.,]?[0-9]*',
+                                          }}
                                           sx={{ ...fieldSx, flex: 1 }}
                                         />
                                       </Stack>

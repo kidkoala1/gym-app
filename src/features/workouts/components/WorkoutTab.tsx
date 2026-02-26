@@ -140,20 +140,18 @@ export function WorkoutTab({
                   <Stack key={`set-${idx}`} direction="row" spacing={1}>
                     <TextField
                       type="text"
-                      inputMode="numeric"
                       placeholder="Reps"
                       value={set.reps}
                       onChange={(event) => onUpdateSetDraft(idx, 'reps', event.target.value)}
-                      inputProps={{ min: 1 }}
+                      inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', min: 1 }}
                       sx={{ ...fieldSx, flex: 1 }}
                     />
                     <TextField
                       type="text"
-                      inputMode="decimal"
                       placeholder="Weight (kg)"
                       value={set.weight}
                       onChange={(event) => onUpdateSetDraft(idx, 'weight', event.target.value)}
-                      inputProps={{ min: 0, step: 0.5 }}
+                      inputProps={{ inputMode: 'decimal', pattern: '[0-9]*[.,]?[0-9]*', min: 0, step: 0.5 }}
                       sx={{ ...fieldSx, flex: 1 }}
                     />
                   </Stack>
