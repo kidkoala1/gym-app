@@ -23,7 +23,8 @@ body {
 body {
   min-width: 320px;
   min-height: 100vh;
-  background: transparent;
+  min-height: 100dvh;
+  background-color: #080a14;
 }
 
 #root {
