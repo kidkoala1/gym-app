@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase'
 import type {
+  AggregatedWorkoutProgressRow,
   ExerciseRow,
   WorkoutRow,
   WorkoutSetInput,
@@ -11,10 +12,69 @@ import type {
   PublicProfileRow,
 } from '../../types/db'
 
+type SupabaseErrorLike = {
+  message: string
+  code?: string | null
+}
+
 function throwSupabaseError(error: { message: string; code?: string | null }) {
   const enriched = new Error(error.message) as Error & { code?: string | null }
   enriched.code = error.code
   throw enriched
+}
+
+function createSupabaseQueryError(
+  error: SupabaseErrorLike,
+  status?: number,
+): Error & { code?: string | null; status?: number } {
+  const enriched = new Error(error.message) as Error & { code?: string | null; status?: number }
+  enriched.code = error.code
+  enriched.status = status
+  return enriched
+}
+
+function canFallbackToTableAggregation(error: SupabaseErrorLike): boolean {
+  const code = (error.code ?? '').toUpperCase()
+  const message = error.message.toLowerCase()
+
+  if (code === 'PGRST106' || code === '42P01') return true
+  if (message.includes('schema must be one of')) return true
+  if (message.includes('not in the schema cache')) return true
+  if (message.includes('permission denied for schema progress')) return true
+  if (message.includes('aggregated_workout_progress') && message.includes('does not exist')) return true
+  return false
+}
+
+function aggregateHistoryRows(
+  targetUserId: string,
+  history: WorkoutHistoryRow[],
+  rangeDays: number | null,
+): AggregatedWorkoutProgressRow[] {
+  const cutoff = rangeDays !== null ? Date.now() - rangeDays * 24 * 60 * 60 * 1000 : null
+
+  const rows = history
+    .filter((workout) => {
+      if (cutoff === null) return true
+      return new Date(workout.started_at).getTime() >= cutoff
+    })
+    .map((workout) => {
+      const sets = (workout.workout_exercises ?? []).flatMap((exercise) => exercise.workout_sets ?? [])
+      if (sets.length === 0) return null
+
+      return {
+        user_id: targetUserId,
+        workout_id: workout.id,
+        workout_date: workout.started_at,
+        exercise_count: sets.length,
+        total_reps: sets.reduce((sum, set) => sum + Number(set.reps), 0),
+        total_volume: sets.reduce((sum, set) => sum + Number(set.reps) * Number(set.weight_kg), 0),
+        max_weight: Math.max(...sets.map((set) => Number(set.weight_kg))),
+      }
+    })
+    .filter((entry): entry is AggregatedWorkoutProgressRow => Boolean(entry))
+    .sort((a, b) => a.workout_date.localeCompare(b.workout_date))
+
+  return rows
 }
 
 export async function listExercises(userId: string): Promise<ExerciseRow[]> {
@@ -213,4 +273,34 @@ export async function searchPublicProfiles(query: string): Promise<PublicProfile
 
   if (error) throwSupabaseError(error)
   return (data ?? []) as PublicProfileRow[]
+}
+
+export async function listAggregatedWorkoutProgress(
+  targetUserId: string,
+  rangeDays: number | null,
+): Promise<AggregatedWorkoutProgressRow[]> {
+  let query = supabase
+    .schema('progress')
+    .from('aggregated_workout_progress')
+    .select('user_id,workout_id,workout_date,exercise_count,total_reps,total_volume,max_weight')
+    .eq('user_id', targetUserId)
+    .order('workout_date', { ascending: true })
+
+  if (rangeDays !== null) {
+    const cutoff = new Date(Date.now() - rangeDays * 24 * 60 * 60 * 1000).toISOString()
+    query = query.gte('workout_date', cutoff)
+  }
+
+  const { data, error, status } = await query
+
+  if (error) {
+    if (canFallbackToTableAggregation(error)) {
+      const history = await listWorkoutHistory(targetUserId)
+      return aggregateHistoryRows(targetUserId, history, rangeDays)
+    }
+
+    throw createSupabaseQueryError(error, status)
+  }
+
+  return (data ?? []) as AggregatedWorkoutProgressRow[]
 }

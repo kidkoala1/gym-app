@@ -16,6 +16,7 @@ export interface ProfileRow {
 export interface PublicProfileRow {
   id: string
   display_name: string
+  is_progress_public?: boolean
 }
 
 export interface WorkoutRow {
@@ -79,4 +80,14 @@ export interface ProgressSeriesRow {
   max_weight: number
   total_volume: number
   total_reps: number
+}
+
+export interface AggregatedWorkoutProgressRow {
+  user_id: string
+  workout_id: string
+  workout_date: string
+  exercise_count: number
+  total_reps: number
+  total_volume: number
+  max_weight: number
 }

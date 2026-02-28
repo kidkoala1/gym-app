@@ -17,6 +17,7 @@ import type { EditableHistoryExercise } from '../localTypes'
 type HistoryTabProps = {
   isLoading: boolean
   workouts: WorkoutHistoryRow[]
+  errorMessage?: string | null
   expandedHistory: Record<string, boolean>
   editingWorkoutId: string | null
   historyEdits: Record<string, EditableHistoryExercise[]>
@@ -39,6 +40,7 @@ type HistoryTabProps = {
 export function HistoryTab({
   isLoading,
   workouts,
+  errorMessage,
   expandedHistory,
   editingWorkoutId,
   historyEdits,
@@ -62,6 +64,8 @@ export function HistoryTab({
           <Box sx={{ display: 'grid', placeItems: 'center', py: 2 }}>
             <CircularProgress size={26} />
           </Box>
+        ) : errorMessage ? (
+          <Typography className="muted">{errorMessage}</Typography>
         ) : workouts.length === 0 ? (
           <Typography className="muted">No completed workouts yet.</Typography>
         ) : (

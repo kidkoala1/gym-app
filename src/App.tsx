@@ -68,6 +68,10 @@ function createInitialSetDraft(): SetDraft[] {
   return [{ reps: '', weight: '' }]
 }
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
 function App() {
   const queryClient = useQueryClient()
   const { session, user, isLoading: authLoading } = useAuthSession()
@@ -118,6 +122,9 @@ function App() {
     queryFn: () => getProfile(user!.id),
     enabled: Boolean(user?.id),
   })
+  const historyErrorMessage = historyWorkoutsQuery.isError
+    ? getErrorMessage(historyWorkoutsQuery.error, 'Could not load workout history.')
+    : null
 
   const exerciseLibrary = useMemo(() => exercisesQuery.data ?? [], [exercisesQuery.data])
   const exerciseNames = useMemo(() => {
@@ -603,11 +610,13 @@ function App() {
           isLoading={historyWorkoutsQuery.isLoading}
           workouts={historyWorkoutsQuery.data ?? []}
           userId={user.id}
+          errorMessage={historyErrorMessage}
         />
       ) : activeTab === 'history' ? (
         <HistoryTab
           isLoading={historyWorkoutsQuery.isLoading}
           workouts={historyWorkoutsQuery.data ?? []}
+          errorMessage={historyErrorMessage}
           expandedHistory={expandedHistory}
           editingWorkoutId={editingWorkoutId}
           historyEdits={historyEdits}

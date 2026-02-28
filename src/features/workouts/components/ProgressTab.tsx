@@ -1,13 +1,15 @@
 import { Box, Button, CircularProgress, MenuItem, Paper, Stack, TextField, Typography } from '@mui/material'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { getProgressSeries, searchPublicProfiles } from '../api'
+import { getProfile } from '../../profile/api'
+import { listWorkoutHistory, searchPublicProfiles } from '../api'
 import type { WorkoutHistoryRow } from '../../../types/db'
 
 type ProgressTabProps = {
   isLoading: boolean
   workouts: WorkoutHistoryRow[]
   userId: string
+  errorMessage?: string | null
 }
 
 type RangeKey = '30d' | '90d' | '365d' | 'all'
@@ -26,6 +28,14 @@ type CombinedSeriesPoint = {
   secondary?: number
 }
 
+type DailyProgressEntry = {
+  dateKey: string
+  dateLabel: string
+  maxWeight: number
+  totalVolume: number
+  totalReps: number
+}
+
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string }> = [
   { key: '30d', label: '30D' },
   { key: '90d', label: '90D' },
@@ -33,8 +43,16 @@ const RANGE_OPTIONS: Array<{ key: RangeKey; label: string }> = [
   { key: 'all', label: 'All' },
 ]
 
+function toDateKey(value: string): string {
+  return new Date(value).toISOString().slice(0, 10)
+}
+
 function formatDateLabel(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function normalizeExerciseName(value: string): string {
+  return value.trim().toLowerCase()
 }
 
 function getRangeCutoff(range: RangeKey): number | null {
@@ -42,11 +60,6 @@ function getRangeCutoff(range: RangeKey): number | null {
   const now = Date.now()
   const days = range === '30d' ? 30 : range === '90d' ? 90 : 365
   return now - days * 24 * 60 * 60 * 1000
-}
-
-function getRangeDays(range: RangeKey): number | null {
-  if (range === 'all') return null
-  return range === '30d' ? 30 : range === '90d' ? 90 : 365
 }
 
 function combineSeries(primary: SeriesPoint[], secondary: SeriesPoint[]): CombinedSeriesPoint[] {
@@ -67,6 +80,74 @@ function combineSeries(primary: SeriesPoint[], secondary: SeriesPoint[]): Combin
         secondary: secondaryPoint?.value,
       }
     })
+}
+
+function buildExerciseDailyProgress(
+  workouts: WorkoutHistoryRow[],
+  exerciseName: string,
+  range: RangeKey,
+): DailyProgressEntry[] {
+  if (!exerciseName) return []
+  const cutoff = getRangeCutoff(range)
+  const targetName = normalizeExerciseName(exerciseName)
+  const byDate = new Map<string, DailyProgressEntry>()
+
+  workouts.forEach((workout) => {
+    const timestamp = new Date(workout.started_at).getTime()
+    if (cutoff !== null && timestamp < cutoff) return
+
+    const matching = (workout.workout_exercises ?? []).filter(
+      (exercise) => normalizeExerciseName(exercise.exercise_name) === targetName,
+    )
+    const sets = matching.flatMap((exercise) => exercise.workout_sets ?? [])
+    if (sets.length === 0) return
+
+    const dateKey = toDateKey(workout.started_at)
+    const nextMax = Math.max(...sets.map((set) => set.weight_kg))
+    const nextVolume = sets.reduce((sum, set) => sum + set.reps * set.weight_kg, 0)
+    const nextReps = sets.reduce((sum, set) => sum + set.reps, 0)
+    const existing = byDate.get(dateKey)
+
+    if (existing) {
+      byDate.set(dateKey, {
+        ...existing,
+        maxWeight: Math.max(existing.maxWeight, nextMax),
+        totalVolume: existing.totalVolume + nextVolume,
+        totalReps: existing.totalReps + nextReps,
+      })
+      return
+    }
+
+    byDate.set(dateKey, {
+      dateKey,
+      dateLabel: formatDateLabel(dateKey),
+      maxWeight: nextMax,
+      totalVolume: nextVolume,
+      totalReps: nextReps,
+    })
+  })
+
+  return [...byDate.values()].sort((a, b) => a.dateKey.localeCompare(b.dateKey))
+}
+
+function isPermissionDeniedError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const maybe = error as { status?: number; code?: string | null }
+  const code = (maybe.code ?? '').toUpperCase()
+  return maybe.status === 401 || maybe.status === 403 || code === '42501' || code === 'PGRST301' || code === 'PGRST302'
+}
+
+function getErrorMessage(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null
+  const maybe = error as { message?: unknown }
+  if (typeof maybe.message !== 'string') return null
+  const message = maybe.message.trim()
+  return message || null
+}
+
+function formatBestWeight(value: number | null): string {
+  if (value === null) return '-'
+  return `${value.toFixed(1)} kg`
 }
 
 function CompareLineChart({
@@ -247,16 +328,21 @@ function CompareLineChart({
   )
 }
 
-export function ProgressTab({ isLoading, workouts, userId }: ProgressTabProps) {
+export function ProgressTab({ isLoading, workouts, userId, errorMessage }: ProgressTabProps) {
   const exerciseNames = useMemo(() => {
-    const set = new Set<string>()
+    const seen = new Set<string>()
+    const names: string[] = []
     workouts.forEach((workout) => {
       ;(workout.workout_exercises ?? []).forEach((exercise) => {
         const trimmed = exercise.exercise_name.trim()
-        if (trimmed) set.add(trimmed)
+        const key = normalizeExerciseName(trimmed)
+        if (trimmed && !seen.has(key)) {
+          seen.add(key)
+          names.push(trimmed)
+        }
       })
     })
-    return [...set].sort((a, b) => a.localeCompare(b))
+    return names.sort((a, b) => a.localeCompare(b))
   }, [workouts])
 
   const [selectedExercise, setSelectedExercise] = useState('')
@@ -264,7 +350,8 @@ export function ProgressTab({ isLoading, workouts, userId }: ProgressTabProps) {
   const [mode, setMode] = useState<ModeKey>('mine')
   const [selectedCompareUserId, setSelectedCompareUserId] = useState('')
   const activeExercise = selectedExercise || exerciseNames[0] || ''
-  const rangeDays = getRangeDays(range)
+  const mineUnavailable = Boolean(errorMessage)
+  const noExerciseData = exerciseNames.length === 0
 
   const profilesQuery = useQuery({
     queryKey: ['public-profiles'],
@@ -277,97 +364,136 @@ export function ProgressTab({ isLoading, workouts, userId }: ProgressTabProps) {
     [profilesQuery.data, userId],
   )
   const effectiveCompareUserId = selectedCompareUserId || compareProfiles[0]?.id || ''
+  const selectedCompareUser = compareProfiles.find((profile) => profile.id === effectiveCompareUserId)
+  const isCompareOwner = effectiveCompareUserId === userId
 
-  const compareSeriesQuery = useQuery({
-    queryKey: ['progress-compare', effectiveCompareUserId, activeExercise, rangeDays],
-    queryFn: () => getProgressSeries(effectiveCompareUserId, activeExercise, rangeDays),
-    enabled: mode === 'compare' && Boolean(effectiveCompareUserId) && Boolean(activeExercise),
+  const compareProfileQuery = useQuery({
+    queryKey: ['profile-visibility', effectiveCompareUserId],
+    queryFn: () => getProfile(effectiveCompareUserId),
+    enabled: mode === 'compare' && Boolean(effectiveCompareUserId),
   })
 
-  const filteredMine = useMemo(() => {
-    if (!activeExercise) return []
-    const cutoff = getRangeCutoff(range)
+  const compareKnownPrivate =
+    mode === 'compare' &&
+    Boolean(effectiveCompareUserId) &&
+    !isCompareOwner &&
+    compareProfileQuery.isSuccess &&
+    compareProfileQuery.data?.is_progress_public === false
 
-    return workouts
-      .filter((workout) => {
-        const timestamp = new Date(workout.started_at).getTime()
-        return cutoff === null || timestamp >= cutoff
-      })
-      .map((workout) => {
-        const matching = (workout.workout_exercises ?? []).filter(
-          (exercise) => exercise.exercise_name.toLowerCase() === activeExercise.toLowerCase(),
-        )
+  const compareHistoryQuery = useQuery({
+    queryKey: ['compare-workout-history', effectiveCompareUserId],
+    queryFn: () => listWorkoutHistory(effectiveCompareUserId),
+    enabled:
+      mode === 'compare' &&
+      Boolean(effectiveCompareUserId) &&
+      !compareKnownPrivate &&
+      !mineUnavailable &&
+      !noExerciseData,
+  })
 
-        const sets = matching.flatMap((exercise) => exercise.workout_sets ?? [])
-        if (sets.length === 0) return null
-
-        const maxWeight = Math.max(...sets.map((set) => set.weight_kg))
-        const totalVolume = sets.reduce((sum, set) => sum + set.reps * set.weight_kg, 0)
-        const totalReps = sets.reduce((sum, set) => sum + set.reps, 0)
-        const dateKey = new Date(workout.started_at).toISOString()
-
-        return {
-          dateKey,
-          dateLabel: formatDateLabel(workout.started_at),
-          maxWeight,
-          totalVolume,
-          totalReps,
-        }
-      })
-      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-      .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
+  const mineExerciseDaily = useMemo(() => {
+    return buildExerciseDailyProgress(workouts, activeExercise, range)
   }, [activeExercise, range, workouts])
 
-  const mineMaxWeightSeries: SeriesPoint[] = filteredMine.map((entry) => ({
+  const compareExerciseDaily = useMemo(
+    () => buildExerciseDailyProgress(compareHistoryQuery.data ?? [], activeExercise, range),
+    [compareHistoryQuery.data, activeExercise, range],
+  )
+
+  const mineDaily = mineExerciseDaily
+
+  const mineMaxWeightSeries: SeriesPoint[] = mineDaily.map((entry) => ({
     dateKey: entry.dateKey,
     dateLabel: entry.dateLabel,
     value: entry.maxWeight,
   }))
-  const mineVolumeSeries: SeriesPoint[] = filteredMine.map((entry) => ({
+  const mineVolumeSeries: SeriesPoint[] = mineDaily.map((entry) => ({
     dateKey: entry.dateKey,
     dateLabel: entry.dateLabel,
     value: entry.totalVolume,
   }))
-  const mineRepsSeries: SeriesPoint[] = filteredMine.map((entry) => ({
+  const mineRepsSeries: SeriesPoint[] = mineDaily.map((entry) => ({
     dateKey: entry.dateKey,
     dateLabel: entry.dateLabel,
     value: entry.totalReps,
   }))
 
-  const compareRows = compareSeriesQuery.data ?? []
-  const compareMaxWeightSeries: SeriesPoint[] = compareRows.map((entry) => ({
-    dateKey: entry.bucket_date,
-    dateLabel: formatDateLabel(entry.bucket_date),
-    value: Number(entry.max_weight),
-  }))
-  const compareVolumeSeries: SeriesPoint[] = compareRows.map((entry) => ({
-    dateKey: entry.bucket_date,
-    dateLabel: formatDateLabel(entry.bucket_date),
-    value: Number(entry.total_volume),
-  }))
-  const compareRepsSeries: SeriesPoint[] = compareRows.map((entry) => ({
-    dateKey: entry.bucket_date,
-    dateLabel: formatDateLabel(entry.bucket_date),
-    value: Number(entry.total_reps),
-  }))
+  const compareMaxWeightSeries: SeriesPoint[] =
+    mode === 'compare'
+      ? compareExerciseDaily.map((entry) => ({
+          dateKey: entry.dateKey,
+          dateLabel: entry.dateLabel,
+          value: entry.maxWeight,
+        }))
+      : []
+  const compareVolumeSeries: SeriesPoint[] =
+    mode === 'compare'
+      ? compareExerciseDaily.map((entry) => ({
+          dateKey: entry.dateKey,
+          dateLabel: entry.dateLabel,
+          value: entry.totalVolume,
+        }))
+      : []
+  const compareRepsSeries: SeriesPoint[] =
+    mode === 'compare'
+      ? compareExerciseDaily.map((entry) => ({
+          dateKey: entry.dateKey,
+          dateLabel: entry.dateLabel,
+          value: entry.totalReps,
+        }))
+      : []
 
-  const maxWeightPoints = combineSeries(
-    mineMaxWeightSeries,
-    mode === 'compare' ? compareMaxWeightSeries : [],
-  )
-  const volumePoints = combineSeries(
-    mineVolumeSeries,
-    mode === 'compare' ? compareVolumeSeries : [],
-  )
-  const repsPoints = combineSeries(
-    mineRepsSeries,
-    mode === 'compare' ? compareRepsSeries : [],
-  )
+  const maxWeightPoints = combineSeries(mineMaxWeightSeries, compareMaxWeightSeries)
+  const volumePoints = combineSeries(mineVolumeSeries, compareVolumeSeries)
+  const repsPoints = combineSeries(mineRepsSeries, compareRepsSeries)
 
-  const bestWeightMine = mineMaxWeightSeries.length > 0 ? Math.max(...mineMaxWeightSeries.map((p) => p.value)) : 0
-  const bestWeightCompare =
-    compareMaxWeightSeries.length > 0 ? Math.max(...compareMaxWeightSeries.map((p) => p.value)) : 0
-  const selectedCompareUser = compareProfiles.find((profile) => profile.id === effectiveCompareUserId)
+  const bestWeightMine = mineMaxWeightSeries.length > 0 ? Math.max(...mineMaxWeightSeries.map((p) => p.value)) : null
+  const bestWeightCompare = compareMaxWeightSeries.length > 0 ? Math.max(...compareMaxWeightSeries.map((p) => p.value)) : null
+  const compareHasPermissionError = isPermissionDeniedError(compareHistoryQuery.error) || isPermissionDeniedError(compareProfileQuery.error)
+  const compareStatusMessage = useMemo(() => {
+    if (mode !== 'compare') return ''
+    if (mineUnavailable) return errorMessage ?? 'Unable to load your workout history.'
+    if (noExerciseData) return 'No completed workout data yet. Finish workouts to compare.'
+    if (profilesQuery.isLoading) return 'Loading users to compare...'
+    if (profilesQuery.isError) return 'Unable to load users to compare right now.'
+    if (compareProfiles.length === 0) return 'No public users available to compare yet.'
+    if (!effectiveCompareUserId) return 'Select a user to compare.'
+    if (compareKnownPrivate) return "This user's progress is private."
+    if (compareProfileQuery.isLoading) return 'Checking profile visibility...'
+    if (compareHistoryQuery.isLoading) return 'Loading compare data...'
+    if (compareHasPermissionError) return "You do not have permission to view this user's progress."
+    if (compareHistoryQuery.isError) {
+      return getErrorMessage(compareHistoryQuery.error) ?? 'Unable to load compare progress. Try again.'
+    }
+    if ((compareHistoryQuery.data ?? []).length === 0 || compareExerciseDaily.length === 0) {
+      if (isCompareOwner) return 'You have no workouts in this range.'
+      if (compareProfileQuery.data?.is_progress_public === true) {
+        return `${selectedCompareUser?.display_name || 'This user'} has no ${activeExercise} data in this range.`
+      }
+      return 'No visible progress found for this user.'
+    }
+    return ''
+  }, [
+    mode,
+    profilesQuery.isLoading,
+    profilesQuery.isError,
+    compareProfiles.length,
+    effectiveCompareUserId,
+    compareKnownPrivate,
+    compareProfileQuery.isLoading,
+    compareProfileQuery.data,
+    compareHistoryQuery.isLoading,
+    compareHasPermissionError,
+    compareHistoryQuery.isError,
+    compareHistoryQuery.data,
+    compareExerciseDaily.length,
+    isCompareOwner,
+    activeExercise,
+    selectedCompareUser?.display_name,
+    mineUnavailable,
+    errorMessage,
+    noExerciseData,
+  ])
 
   return (
     <Paper className="panel" elevation={0}>
@@ -380,8 +506,6 @@ export function ProgressTab({ isLoading, workouts, userId }: ProgressTabProps) {
           <Box sx={{ display: 'grid', placeItems: 'center', py: 2 }}>
             <CircularProgress size={26} />
           </Box>
-        ) : exerciseNames.length === 0 ? (
-          <Typography className="muted">No completed workout data yet. Finish workouts to see progress.</Typography>
         ) : (
           <>
             <Stack direction="row" spacing={0.6}>
@@ -401,24 +525,30 @@ export function ProgressTab({ isLoading, workouts, userId }: ProgressTabProps) {
               </Button>
             </Stack>
 
-            <TextField
-              select
-              label="Exercise"
-              value={activeExercise}
-              onChange={(event) => setSelectedExercise(event.target.value)}
-              size="small"
-            >
-              {exerciseNames.map((name) => (
-                <MenuItem key={name} value={name}>
-                  {name}
-                </MenuItem>
-              ))}
-            </TextField>
+            {mineUnavailable ? (
+              <Typography className="muted">{errorMessage}</Typography>
+            ) : noExerciseData ? (
+              <Typography className="muted">No completed workout data yet. Finish workouts to see progress.</Typography>
+            ) : (
+              <TextField
+                select
+                label="Exercise"
+                value={activeExercise}
+                onChange={(event) => setSelectedExercise(event.target.value)}
+                size="small"
+              >
+                {exerciseNames.map((name) => (
+                  <MenuItem key={name} value={name}>
+                    {name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
 
             {mode === 'compare' ? (
               profilesQuery.isLoading ? (
                 <Typography variant="body2" className="muted">
-                  Loading public users...
+                  Loading users to compare...
                 </Typography>
               ) : compareProfiles.length === 0 ? (
                 <Typography variant="body2" className="muted">
@@ -457,56 +587,60 @@ export function ProgressTab({ isLoading, workouts, userId }: ProgressTabProps) {
               })}
             </Stack>
 
-            <Stack direction="row" spacing={0.7}>
-              <Paper className="card" elevation={0} sx={{ flex: 1, p: 0.7 }}>
-                <Typography variant="caption" className="muted">
-                  Your best weight
-                </Typography>
-                <Typography sx={{ fontWeight: 700 }}>{bestWeightMine.toFixed(1)} kg</Typography>
-              </Paper>
-              {mode === 'compare' ? (
-                <Paper className="card" elevation={0} sx={{ flex: 1, p: 0.7 }}>
-                  <Typography variant="caption" className="muted">
-                    {selectedCompareUser?.display_name || 'User'} best
-                  </Typography>
-                  <Typography sx={{ fontWeight: 700 }}>{bestWeightCompare.toFixed(1)} kg</Typography>
-                </Paper>
-              ) : null}
-              <Paper className="card" elevation={0} sx={{ flex: 1, p: 0.7 }}>
-                <Typography variant="caption" className="muted">
-                  Your sessions
-                </Typography>
-                <Typography sx={{ fontWeight: 700 }}>{filteredMine.length}</Typography>
-              </Paper>
-            </Stack>
-
-            {mode === 'compare' && compareSeriesQuery.isLoading ? (
+            {mode === 'compare' && compareStatusMessage ? (
               <Typography variant="body2" className="muted">
-                Loading compare data...
+                {compareStatusMessage}
               </Typography>
             ) : null}
 
-            <CompareLineChart
-              title="Max Weight Trend"
-              unit="kg"
-              points={maxWeightPoints}
-              primaryLabel="You"
-              secondaryLabel={mode === 'compare' ? selectedCompareUser?.display_name || 'User' : undefined}
-            />
-            <CompareLineChart
-              title="Volume Trend"
-              unit="kg"
-              points={volumePoints}
-              primaryLabel="You"
-              secondaryLabel={mode === 'compare' ? selectedCompareUser?.display_name || 'User' : undefined}
-            />
-            <CompareLineChart
-              title="Total Reps Trend"
-              unit="reps"
-              points={repsPoints}
-              primaryLabel="You"
-              secondaryLabel={mode === 'compare' ? selectedCompareUser?.display_name || 'User' : undefined}
-            />
+            {!noExerciseData && !mineUnavailable ? (
+              <>
+                <Stack direction="row" spacing={0.7}>
+                  <Paper className="card" elevation={0} sx={{ flex: 1, p: 0.7 }}>
+                    <Typography variant="caption" className="muted">
+                      Your best weight
+                    </Typography>
+                    <Typography sx={{ fontWeight: 700 }}>{formatBestWeight(bestWeightMine)}</Typography>
+                  </Paper>
+                  {mode === 'compare' ? (
+                    <Paper className="card" elevation={0} sx={{ flex: 1, p: 0.7 }}>
+                      <Typography variant="caption" className="muted">
+                        {selectedCompareUser?.display_name || 'User'} best
+                      </Typography>
+                      <Typography sx={{ fontWeight: 700 }}>{formatBestWeight(bestWeightCompare)}</Typography>
+                    </Paper>
+                  ) : null}
+                  <Paper className="card" elevation={0} sx={{ flex: 1, p: 0.7 }}>
+                    <Typography variant="caption" className="muted">
+                      Your sessions
+                    </Typography>
+                    <Typography sx={{ fontWeight: 700 }}>{mineDaily.length}</Typography>
+                  </Paper>
+                </Stack>
+
+                <CompareLineChart
+                  title="Max Weight Trend"
+                  unit="kg"
+                  points={maxWeightPoints}
+                  primaryLabel="You"
+                  secondaryLabel={mode === 'compare' ? selectedCompareUser?.display_name || 'User' : undefined}
+                />
+                <CompareLineChart
+                  title="Volume Trend"
+                  unit="kg"
+                  points={volumePoints}
+                  primaryLabel="You"
+                  secondaryLabel={mode === 'compare' ? selectedCompareUser?.display_name || 'User' : undefined}
+                />
+                <CompareLineChart
+                  title="Total Reps Trend"
+                  unit="reps"
+                  points={repsPoints}
+                  primaryLabel="You"
+                  secondaryLabel={mode === 'compare' ? selectedCompareUser?.display_name || 'User' : undefined}
+                />
+              </>
+            ) : null}
           </>
         )}
       </Stack>
