@@ -5,6 +5,7 @@ import type { SettingsView } from '../../workouts/localTypes'
 
 type SettingsTabProps = {
   settingsView: SettingsView
+  appVersion: string
   defaultExerciseNames: readonly string[]
   exerciseLibrary: ExerciseRow[]
   profileDisplayName: string
@@ -29,6 +30,7 @@ type SettingsTabProps = {
 
 export function SettingsTab({
   settingsView,
+  appVersion,
   defaultExerciseNames,
   exerciseLibrary,
   profileDisplayName,
@@ -227,6 +229,9 @@ export function SettingsTab({
             >
               Sign out
             </Button>
+            <Typography variant="caption" className="muted" sx={{ mt: 0.8, textAlign: 'center' }}>
+              Version {appVersion}
+            </Typography>
           </Stack>
         )}
       </Stack>

@@ -99,6 +99,7 @@ function pickTopSetInSession(sets: Array<{ reps: number; weight_kg: number }>, p
 }
 
 function App() {
+  const appVersion = __APP_VERSION__
   const queryClient = useQueryClient()
   const { session, user, isLoading: authLoading } = useAuthSession()
 
@@ -715,6 +716,7 @@ function App() {
       ) : (
         <SettingsTab
           settingsView={settingsView}
+          appVersion={appVersion}
           defaultExerciseNames={DEFAULT_EXERCISE_NAMES}
           exerciseLibrary={exerciseLibrary}
           profileDisplayName={profileDisplayName}
