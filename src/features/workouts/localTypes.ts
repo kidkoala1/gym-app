@@ -34,3 +34,15 @@ export type EditableHistoryExercise = {
 }
 
 export type SettingsView = 'menu' | 'exercise-list' | 'profile'
+
+export type ExerciseInsightSet = {
+  reps: number
+  weightKg: number
+  performedAt: string
+}
+
+export type ExerciseWeightInsights = {
+  suggestedToday: ExerciseInsightSet | null
+  lastSession: ExerciseInsightSet | null
+  recentBest: ExerciseInsightSet | null
+}

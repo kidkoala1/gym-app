@@ -42,11 +42,16 @@ import {
 } from './features/workouts/api'
 import type {
   ActiveWorkout,
+  ExerciseInsightSet,
+  ExerciseWeightInsights,
   EditableHistoryExercise,
   SetDraft,
   SettingsView,
 } from './features/workouts/localTypes'
-import { DEFAULT_EXERCISE_NAMES } from './features/workouts/defaultExercises'
+import {
+  DEFAULT_EXERCISE_NAMES,
+  resolveCanonicalExerciseName,
+} from './features/workouts/defaultExercises'
 import { supabase } from './lib/supabase'
 import './App.css'
 
@@ -70,6 +75,27 @@ function createInitialSetDraft(): SetDraft[] {
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+const RECENT_BEST_WINDOW_DAYS = 60
+
+function compareSetsByStrength(left: ExerciseInsightSet, right: ExerciseInsightSet): number {
+  if (left.weightKg !== right.weightKg) return left.weightKg - right.weightKg
+  if (left.reps !== right.reps) return left.reps - right.reps
+  return new Date(left.performedAt).getTime() - new Date(right.performedAt).getTime()
+}
+
+function pickTopSetInSession(sets: Array<{ reps: number; weight_kg: number }>, performedAt: string) {
+  const normalized = sets
+    .filter((set) => Number.isFinite(set.reps) && Number.isFinite(set.weight_kg))
+    .filter((set) => set.reps > 0 && set.weight_kg >= 0)
+    .map((set) => ({ reps: set.reps, weightKg: set.weight_kg, performedAt }))
+
+  if (normalized.length === 0) return null
+
+  return normalized.reduce((best, current) =>
+    compareSetsByStrength(current, best) > 0 ? current : best,
+  )
 }
 
 function App() {
@@ -141,6 +167,56 @@ function App() {
 
     return names.sort((a, b) => a.localeCompare(b))
   }, [exerciseLibrary])
+
+  const exerciseInsights = useMemo<ExerciseWeightInsights | null>(() => {
+    const canonicalNameCache = new Map<string, string>()
+    const canonicalizeToLower = (name: string) => {
+      const cacheKey = name.trim().toLowerCase()
+      if (canonicalNameCache.has(cacheKey)) return canonicalNameCache.get(cacheKey) as string
+
+      const canonical = resolveCanonicalExerciseName(name, exerciseNames).toLowerCase()
+      canonicalNameCache.set(cacheKey, canonical)
+      return canonical
+    }
+
+    const targetName = canonicalizeToLower(exerciseNameInput)
+    if (!targetName) return null
+
+    const workouts = historyWorkoutsQuery.data ?? []
+    let lastSession: ExerciseInsightSet | null = null
+    let recentBest: ExerciseInsightSet | null = null
+    const cutoffMs = Date.now() - RECENT_BEST_WINDOW_DAYS * 24 * 60 * 60 * 1000
+
+    for (const workout of workouts) {
+      const matchingExercises = (workout.workout_exercises ?? []).filter(
+        (exercise) => canonicalizeToLower(exercise.exercise_name) === targetName,
+      )
+      if (matchingExercises.length === 0) continue
+
+      const topSet = pickTopSetInSession(
+        matchingExercises.flatMap((exercise) => exercise.workout_sets ?? []),
+        workout.started_at,
+      )
+      if (!topSet) continue
+
+      if (!lastSession) {
+        lastSession = topSet
+      }
+
+      const workoutTime = new Date(workout.started_at).getTime()
+      if (Number.isFinite(workoutTime) && workoutTime >= cutoffMs) {
+        if (!recentBest || compareSetsByStrength(topSet, recentBest) > 0) {
+          recentBest = topSet
+        }
+      }
+    }
+
+    return {
+      suggestedToday: lastSession ?? recentBest,
+      lastSession,
+      recentBest,
+    }
+  }, [exerciseNameInput, exerciseNames, historyWorkoutsQuery.data])
 
   useEffect(() => {
     const metadataDisplay =
@@ -346,7 +422,7 @@ function App() {
           continue
         }
 
-        const cleanedName = exercise.exercise_name.trim()
+        const cleanedName = resolveCanonicalExerciseName(exercise.exercise_name, exerciseNames).trim()
         if (!cleanedName) throw new Error('Exercise title cannot be empty.')
 
         await updateWorkoutExerciseName(exercise.id, cleanedName)
@@ -482,7 +558,7 @@ function App() {
   async function finishExercise() {
     if (!activeWorkout || !user) return
 
-    const cleanedName = exerciseNameInput.trim()
+    const cleanedName = resolveCanonicalExerciseName(exerciseNameInput, exerciseNames).trim()
     if (!cleanedName) return
 
     const completedSets = setDrafts
@@ -523,7 +599,7 @@ function App() {
   }
 
   async function addExerciseToLibrary() {
-    const value = newExerciseInput.trim()
+    const value = resolveCanonicalExerciseName(newExerciseInput, exerciseNames).trim()
     if (!value) return
 
     try {
@@ -588,6 +664,8 @@ function App() {
           setDrafts={setDrafts}
           exerciseNames={exerciseNames}
           exercisesLoading={exercisesQuery.isLoading}
+          exerciseInsightsLoading={historyWorkoutsQuery.isLoading}
+          exerciseInsights={exerciseInsights}
           fieldSx={fieldSx}
           startWorkoutPending={startWorkoutMutation.isPending}
           finishWorkoutPending={finishWorkoutMutation.isPending}
@@ -603,6 +681,9 @@ function App() {
             setSetDrafts(createInitialSetDraft())
           }}
           onExerciseNameInputChange={setExerciseNameInput}
+          onExerciseNameInputBlur={() =>
+            setExerciseNameInput((prev) => resolveCanonicalExerciseName(prev, exerciseNames))
+          }
           onUpdateSetDraft={updateSetDraft}
         />
       ) : activeTab === 'progress' ? (

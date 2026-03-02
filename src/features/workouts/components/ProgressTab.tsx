@@ -484,6 +484,7 @@ export function ProgressTab({ isLoading, workouts, userId, errorMessage }: Progr
     compareProfileQuery.data,
     compareHistoryQuery.isLoading,
     compareHasPermissionError,
+    compareHistoryQuery.error,
     compareHistoryQuery.isError,
     compareHistoryQuery.data,
     compareExerciseDaily.length,

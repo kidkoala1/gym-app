@@ -8,7 +8,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import type { ActiveWorkout, SetDraft } from '../localTypes'
+import type { ActiveWorkout, ExerciseInsightSet, ExerciseWeightInsights, SetDraft } from '../localTypes'
 
 type WorkoutTabProps = {
   activeWorkout: ActiveWorkout | null
@@ -17,6 +17,8 @@ type WorkoutTabProps = {
   setDrafts: SetDraft[]
   exerciseNames: string[]
   exercisesLoading: boolean
+  exerciseInsightsLoading: boolean
+  exerciseInsights: ExerciseWeightInsights | null
   fieldSx: object
   startWorkoutPending: boolean
   finishWorkoutPending: boolean
@@ -28,6 +30,7 @@ type WorkoutTabProps = {
   onFinishExercise: () => void
   onCancelAddExercise: () => void
   onExerciseNameInputChange: (value: string) => void
+  onExerciseNameInputBlur: () => void
   onUpdateSetDraft: (index: number, field: keyof SetDraft, value: string) => void
 }
 
@@ -38,6 +41,8 @@ export function WorkoutTab({
   setDrafts,
   exerciseNames,
   exercisesLoading,
+  exerciseInsightsLoading,
+  exerciseInsights,
   fieldSx,
   startWorkoutPending,
   finishWorkoutPending,
@@ -49,8 +54,21 @@ export function WorkoutTab({
   onFinishExercise,
   onCancelAddExercise,
   onExerciseNameInputChange,
+  onExerciseNameInputBlur,
   onUpdateSetDraft,
 }: WorkoutTabProps) {
+  const hasExerciseName = exerciseNameInput.trim().length > 0
+
+  function formatSetSummary(set: ExerciseInsightSet | null): string {
+    if (!set) return 'No data yet'
+    return `${set.weightKg} kg x ${set.reps}`
+  }
+
+  function formatPerformedDate(set: ExerciseInsightSet | null): string {
+    if (!set) return 'No previous workout found'
+    return new Date(set.performedAt).toLocaleDateString()
+  }
+
   return (
     <Paper className="panel" elevation={0}>
       {!activeWorkout ? (
@@ -123,10 +141,74 @@ export function WorkoutTab({
                 inputValue={exerciseNameInput}
                 onInputChange={(_, value) => onExerciseNameInputChange(value)}
                 renderInput={(params) => (
-                  <TextField {...params} label="Exercise" placeholder="Type exercise name" sx={fieldSx} />
+                  <TextField
+                    {...params}
+                    label="Exercise"
+                    placeholder="Type exercise name"
+                    sx={fieldSx}
+                    onBlur={onExerciseNameInputBlur}
+                  />
                 )}
                 sx={{ mb: 0.7 }}
               />
+
+              {hasExerciseName && (
+                <Stack spacing={0.7} sx={{ mb: 0.9 }}>
+                  <Typography variant="body2" sx={{ color: '#c7cbf7', fontWeight: 700 }}>
+                    Weight guidance
+                  </Typography>
+
+                  {exerciseInsightsLoading ? (
+                    <Typography variant="body2" className="muted">
+                      Loading history...
+                    </Typography>
+                  ) : (
+                    <Stack
+                      direction={{ xs: 'column', sm: 'row' }}
+                      spacing={0.7}
+                      sx={{ '& > *': { flex: 1, minWidth: 0 } }}
+                    >
+                      <Paper className="exercise-card" elevation={0}>
+                        <Typography variant="caption" sx={{ color: '#c7cbf7' }}>
+                          Suggested Today
+                        </Typography>
+                        <Typography sx={{ fontWeight: 700, fontSize: '0.95rem' }}>
+                          {formatSetSummary(exerciseInsights?.suggestedToday ?? null)}
+                        </Typography>
+                        <Typography variant="caption" className="muted">
+                          {exerciseInsights?.suggestedToday
+                            ? 'Based on your last successful session'
+                            : 'Log one session to unlock a suggestion'}
+                        </Typography>
+                      </Paper>
+
+                      <Paper className="exercise-card" elevation={0}>
+                        <Typography variant="caption" sx={{ color: '#c7cbf7' }}>
+                          Last Session
+                        </Typography>
+                        <Typography sx={{ fontWeight: 700, fontSize: '0.95rem' }}>
+                          {formatSetSummary(exerciseInsights?.lastSession ?? null)}
+                        </Typography>
+                        <Typography variant="caption" className="muted">
+                          {formatPerformedDate(exerciseInsights?.lastSession ?? null)}
+                        </Typography>
+                      </Paper>
+
+                      <Paper className="exercise-card" elevation={0}>
+                        <Typography variant="caption" sx={{ color: '#c7cbf7' }}>
+                          Recent Best (60d)
+                        </Typography>
+                        <Typography sx={{ fontWeight: 700, fontSize: '0.95rem' }}>
+                          {formatSetSummary(exerciseInsights?.recentBest ?? null)}
+                        </Typography>
+                        <Typography variant="caption" className="muted">
+                          {formatPerformedDate(exerciseInsights?.recentBest ?? null)}
+                        </Typography>
+                      </Paper>
+                    </Stack>
+                  )}
+                </Stack>
+              )}
 
               <Stack direction="row" spacing={1}>
                 <Typography sx={{ flex: 1, fontSize: '0.8rem', color: '#c7cbf7' }}>Reps</Typography>
