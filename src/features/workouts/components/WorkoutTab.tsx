@@ -82,7 +82,7 @@ export function WorkoutTab({
         <Stack spacing={1.25}>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
             <Typography>Started: {new Date(activeWorkout.startedAt).toLocaleString()}</Typography>
-            <Stack direction="row" spacing={1}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
               <Button
                 variant="outlined"
                 color="error"

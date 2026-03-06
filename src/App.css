@@ -3,15 +3,28 @@
 }
 
 .app-shell {
-  max-width: 560px;
+  width: min(560px, 100%);
+  height: 100%;
+  min-height: 100dvh;
   margin: 0 auto;
-  padding: calc(0.9rem + env(safe-area-inset-top)) 0.9rem calc(0.9rem + env(safe-area-inset-bottom));
+  padding:
+    calc(0.9rem + env(safe-area-inset-top))
+    calc(0.9rem + env(safe-area-inset-right))
+    calc(0.9rem + env(safe-area-inset-bottom))
+    calc(0.9rem + env(safe-area-inset-left));
   color: #eef0ff;
   display: grid;
+  align-content: start;
   gap: 0.8rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .panel {
+  width: 100%;
+  min-width: 0;
   border: 1px solid rgba(183, 150, 255, 0.3);
   background: linear-gradient(180deg, rgba(27, 20, 54, 0.72), rgba(16, 12, 36, 0.72));
   backdrop-filter: blur(12px);
@@ -22,6 +35,7 @@
 }
 
 .card {
+  min-width: 0;
   border: 1px solid rgba(174, 147, 244, 0.35);
   background: rgba(24, 17, 50, 0.7);
   border-radius: 12px;
@@ -29,6 +43,7 @@
 }
 
 .exercise-card {
+  min-width: 0;
   border: 1px solid rgba(173, 141, 255, 0.22);
   background: rgba(18, 13, 40, 0.62);
   border-radius: 10px;
@@ -56,6 +71,18 @@
 
 @media (min-width: 680px) {
   .app-shell {
-    padding: calc(1.1rem + env(safe-area-inset-top)) 1.1rem calc(1.1rem + env(safe-area-inset-bottom));
+    padding:
+      calc(1.1rem + env(safe-area-inset-top))
+      calc(1.1rem + env(safe-area-inset-right))
+      calc(1.1rem + env(safe-area-inset-bottom))
+      calc(1.1rem + env(safe-area-inset-left));
+  }
+}
+
+@media (max-width: 600px) {
+  .panel {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
   }
 }

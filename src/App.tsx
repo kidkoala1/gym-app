@@ -648,7 +648,16 @@ function App() {
           variant="fullWidth"
           textColor="inherit"
           indicatorColor="secondary"
-          sx={{ minHeight: 44, '& .MuiTab-root': { minHeight: 44, fontWeight: 600 } }}
+          sx={{
+            minHeight: 44,
+            '& .MuiTab-root': {
+              minHeight: 44,
+              minWidth: 0,
+              px: 0.5,
+              fontWeight: 600,
+              fontSize: { xs: '0.78rem', sm: '0.9rem' },
+            },
+          }}
         >
           <Tab value="workout" label="Workout" />
           <Tab value="progress" label="Progress" />
