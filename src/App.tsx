@@ -77,6 +77,10 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
 }
 
+function parseLocalizedDecimal(value: string): number {
+  return Number(value.trim().replace(',', '.'))
+}
+
 const RECENT_BEST_WINDOW_DAYS = 60
 
 function compareSetsByStrength(left: ExerciseInsightSet, right: ExerciseInsightSet): number {
@@ -430,7 +434,7 @@ function App() {
 
         for (const set of exercise.sets) {
           const reps = Number(set.reps)
-          const weight = Number(set.weight_kg)
+          const weight = parseLocalizedDecimal(set.weight_kg)
 
           if (!Number.isFinite(reps) || reps <= 0) throw new Error('Reps must be greater than 0.')
           if (!Number.isFinite(weight) || weight < 0) throw new Error('Weight must be 0 or greater.')
@@ -564,7 +568,7 @@ function App() {
 
     const completedSets = setDrafts
       .filter((set) => set.reps.trim() !== '' && set.weight.trim() !== '')
-      .map((set) => ({ reps: Number(set.reps), weightKg: Number(set.weight) }))
+      .map((set) => ({ reps: Number(set.reps), weightKg: parseLocalizedDecimal(set.weight) }))
       .filter((set) => Number.isFinite(set.reps) && Number.isFinite(set.weightKg))
       .filter((set) => set.reps > 0 && set.weightKg >= 0)
 

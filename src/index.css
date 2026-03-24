@@ -20,8 +20,9 @@ body {
     radial-gradient(circle at 88% 5%, rgba(108, 66, 201, 0.35), transparent 42%),
     linear-gradient(170deg, #090714, #13102a 45%, #171335);
   background-color: #090714;
-  overflow: hidden;
-  overscroll-behavior: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 body {
@@ -31,9 +32,7 @@ body {
 
 #root {
   width: 100%;
-  height: 100%;
   min-height: 100vh;
   min-height: 100dvh;
   background: inherit;
-  overflow: hidden;
 }
