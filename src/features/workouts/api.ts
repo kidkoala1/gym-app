@@ -121,11 +121,11 @@ export async function deleteExercise(id: string, userId: string): Promise<void> 
   if (error) throwSupabaseError(error)
 }
 
-export async function createWorkout(userId: string, startedAt: string): Promise<WorkoutRow> {
+export async function createWorkout(userId: string, startedAt: string, title?: string | null): Promise<WorkoutRow> {
   const { data, error } = await supabase
     .from('workouts')
-    .insert({ user_id: userId, started_at: startedAt })
-    .select('id,user_id,started_at,finished_at,created_at')
+    .insert({ user_id: userId, started_at: startedAt, title: title || null })
+    .select('id,user_id,started_at,finished_at,title,created_at')
     .single()
 
   if (error) throwSupabaseError(error)
@@ -136,13 +136,14 @@ export async function finishWorkout(
   workoutId: string,
   userId: string,
   finishedAt: string,
+  title?: string | null,
 ): Promise<WorkoutRow> {
   const { data, error } = await supabase
     .from('workouts')
-    .update({ finished_at: finishedAt })
+    .update({ finished_at: finishedAt, ...(title !== undefined && { title: title || null }) })
     .eq('id', workoutId)
     .eq('user_id', userId)
-    .select('id,user_id,started_at,finished_at,created_at')
+    .select('id,user_id,started_at,finished_at,title,created_at')
     .single()
 
   if (error) throwSupabaseError(error)
@@ -234,7 +235,7 @@ export async function listRecentWorkouts(
 ): Promise<WorkoutWithExerciseRefs[]> {
   const { data, error } = await supabase
     .from('workouts')
-    .select('id,started_at,finished_at,workout_exercises(id)')
+    .select('id,started_at,finished_at,title,workout_exercises(id)')
     .eq('user_id', userId)
     .order('started_at', { ascending: false })
     .limit(limit)
@@ -247,7 +248,7 @@ export async function listWorkoutHistory(userId: string): Promise<WorkoutHistory
   const { data, error } = await supabase
     .from('workouts')
     .select(
-      'id,started_at,finished_at,workout_exercises(id,exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
+      'id,started_at,finished_at,title,workout_exercises(id,exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
     )
     .eq('user_id', userId)
     .order('started_at', { ascending: false })

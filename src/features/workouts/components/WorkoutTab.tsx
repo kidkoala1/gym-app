@@ -1,6 +1,7 @@
 import {
   Autocomplete,
   Button,
+  Chip,
   List,
   ListItem,
   Paper,
@@ -14,6 +15,8 @@ type WorkoutTabProps = {
   activeWorkout: ActiveWorkout | null
   isAddingExercise: boolean
   exerciseNameInput: string
+  workoutTitleInput: string
+  workoutTitleSuggestions: string[]
   setDrafts: SetDraft[]
   exerciseNames: string[]
   exercisesLoading: boolean
@@ -29,6 +32,8 @@ type WorkoutTabProps = {
   onOpenAddExercise: () => void
   onFinishExercise: () => void
   onCancelAddExercise: () => void
+  onWorkoutTitleInputChange: (value: string) => void
+  onSelectWorkoutTitleSuggestion: (value: string) => void
   onExerciseNameInputChange: (value: string) => void
   onExerciseNameInputBlur: () => void
   onUpdateSetDraft: (index: number, field: keyof SetDraft, value: string) => void
@@ -38,6 +43,8 @@ export function WorkoutTab({
   activeWorkout,
   isAddingExercise,
   exerciseNameInput,
+  workoutTitleInput,
+  workoutTitleSuggestions,
   setDrafts,
   exerciseNames,
   exercisesLoading,
@@ -53,6 +60,8 @@ export function WorkoutTab({
   onOpenAddExercise,
   onFinishExercise,
   onCancelAddExercise,
+  onWorkoutTitleInputChange,
+  onSelectWorkoutTitleSuggestion,
   onExerciseNameInputChange,
   onExerciseNameInputBlur,
   onUpdateSetDraft,
@@ -69,11 +78,35 @@ export function WorkoutTab({
     return new Date(set.performedAt).toLocaleDateString()
   }
 
+  const titleSuggestions = (
+    <Stack spacing={0.7}>
+      <TextField
+        label="Workout title"
+        placeholder="Push, Legs, Full Body..."
+        value={workoutTitleInput}
+        onChange={(event) => onWorkoutTitleInputChange(event.target.value)}
+        sx={fieldSx}
+      />
+      <Stack direction="row" spacing={0.7} useFlexGap flexWrap="wrap">
+        {workoutTitleSuggestions.map((title) => (
+          <Chip
+            key={title}
+            label={title}
+            clickable
+            color={workoutTitleInput.trim().toLowerCase() === title.toLowerCase() ? 'secondary' : 'default'}
+            onClick={() => onSelectWorkoutTitleSuggestion(title)}
+          />
+        ))}
+      </Stack>
+    </Stack>
+  )
+
   return (
     <Paper className="panel" elevation={0}>
       {!activeWorkout ? (
         <Stack spacing={1.25}>
           <Typography>No active workout session.</Typography>
+          {titleSuggestions}
           <Button variant="contained" onClick={onStartWorkout} disabled={startWorkoutPending}>
             Start Workout
           </Button>
@@ -81,7 +114,12 @@ export function WorkoutTab({
       ) : (
         <Stack spacing={1.25}>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
-            <Typography>Started: {new Date(activeWorkout.startedAt).toLocaleString()}</Typography>
+            <Stack spacing={0.45}>
+              <Typography>Started: {new Date(activeWorkout.startedAt).toLocaleString()}</Typography>
+              <Typography variant="body2" className="muted">
+                {activeWorkout.title?.trim() || 'Untitled workout'}
+              </Typography>
+            </Stack>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
               <Button
                 variant="outlined"
@@ -101,6 +139,8 @@ export function WorkoutTab({
               </Button>
             </Stack>
           </Stack>
+
+          {titleSuggestions}
 
           <Stack spacing={0.75}>
             <Typography variant="h6" sx={{ fontSize: '1rem' }}>

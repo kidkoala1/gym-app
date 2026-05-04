@@ -24,6 +24,7 @@ export interface WorkoutRow {
   user_id: string
   started_at: string
   finished_at: string | null
+  title: string | null
   created_at: string
 }
 
@@ -46,6 +47,7 @@ export interface WorkoutWithExerciseRefs {
   id: string
   started_at: string
   finished_at: string | null
+  title: string | null
   workout_exercises: Array<{ id: string }>
 }
 
@@ -67,6 +69,7 @@ export interface WorkoutHistoryRow {
   id: string
   started_at: string
   finished_at: string | null
+  title: string | null
   workout_exercises: WorkoutHistoryExercise[]
 }
 

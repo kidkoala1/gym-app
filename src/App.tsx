@@ -63,6 +63,17 @@ type SnackbarState = {
   message: string
 }
 
+const WORKOUT_TITLE_SUGGESTIONS = [
+  'Push',
+  'Pull',
+  'Legs',
+  'Upper',
+  'Lower',
+  'Full Body',
+  'Chest',
+  'Back',
+]
+
 const fieldSx = {
   '& .MuiInputBase-root': {
     fontSize: '16px',
@@ -79,6 +90,11 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 function parseLocalizedDecimal(value: string): number {
   return Number(value.trim().replace(',', '.'))
+}
+
+function normalizeWorkoutTitle(value: string): string | null {
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
 }
 
 const RECENT_BEST_WINDOW_DAYS = 60
@@ -113,6 +129,7 @@ function App() {
   const [activeWorkout, setActiveWorkout] = useState<ActiveWorkout | null>(null)
   const [isAddingExercise, setIsAddingExercise] = useState(false)
   const [exerciseNameInput, setExerciseNameInput] = useState('')
+  const [workoutTitleInput, setWorkoutTitleInput] = useState('')
   const [setDrafts, setSetDrafts] = useState<SetDraft[]>(createInitialSetDraft())
 
   const [newExerciseInput, setNewExerciseInput] = useState('')
@@ -246,14 +263,19 @@ function App() {
   const startWorkoutMutation = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error('You need to be signed in.')
-      return createWorkout(user.id, new Date().toISOString())
+      return createWorkout(user.id, new Date().toISOString(), normalizeWorkoutTitle(workoutTitleInput))
     },
   })
 
   const finishWorkoutMutation = useMutation({
     mutationFn: async (payload: { workoutId: string }) => {
       if (!user) throw new Error('You need to be signed in.')
-      return finishWorkoutApi(payload.workoutId, user.id, new Date().toISOString())
+      return finishWorkoutApi(
+        payload.workoutId,
+        user.id,
+        new Date().toISOString(),
+        normalizeWorkoutTitle(workoutTitleInput),
+      )
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['workout-history', user?.id] })
@@ -566,6 +588,7 @@ function App() {
     setActiveWorkout(null)
     setIsAddingExercise(false)
     setExerciseNameInput('')
+    setWorkoutTitleInput('')
     setSetDrafts(createInitialSetDraft())
     setProfileDisplayName('')
     setProfileAvatarUrl('')
@@ -594,7 +617,12 @@ function App() {
   async function startWorkout() {
     try {
       const workout = await startWorkoutMutation.mutateAsync()
-      setActiveWorkout({ id: workout.id, startedAt: workout.started_at, exercises: [] })
+      setActiveWorkout({
+        id: workout.id,
+        startedAt: workout.started_at,
+        title: workout.title,
+        exercises: [],
+      })
       setIsAddingExercise(false)
       setExerciseNameInput('')
       setSetDrafts(createInitialSetDraft())
@@ -611,6 +639,7 @@ function App() {
       setActiveWorkout(null)
       setIsAddingExercise(false)
       setExerciseNameInput('')
+      setWorkoutTitleInput('')
       setSetDrafts(createInitialSetDraft())
       showSuccess('Workout finished and saved.')
     } catch (error) {
@@ -626,6 +655,7 @@ function App() {
       setActiveWorkout(null)
       setIsAddingExercise(false)
       setExerciseNameInput('')
+      setWorkoutTitleInput('')
       setSetDrafts(createInitialSetDraft())
       setCancelWorkoutConfirmOpen(false)
       showSuccess('Workout canceled.')
@@ -638,6 +668,11 @@ function App() {
     setIsAddingExercise(true)
     setExerciseNameInput('')
     setSetDrafts(createInitialSetDraft())
+  }
+
+  function handleWorkoutTitleInputChange(value: string) {
+    setWorkoutTitleInput(value)
+    setActiveWorkout((prev) => (prev ? { ...prev, title: normalizeWorkoutTitle(value) } : prev))
   }
 
   function updateSetDraft(index: number, field: keyof SetDraft, value: string) {
@@ -776,6 +811,8 @@ function App() {
           startWorkoutPending={startWorkoutMutation.isPending}
           finishWorkoutPending={finishWorkoutMutation.isPending}
           deleteWorkoutPending={deleteWorkoutMutation.isPending}
+          workoutTitleInput={workoutTitleInput}
+          workoutTitleSuggestions={WORKOUT_TITLE_SUGGESTIONS}
           onStartWorkout={startWorkout}
           onFinishWorkout={finishWorkout}
           onOpenCancelWorkoutConfirm={() => setCancelWorkoutConfirmOpen(true)}
@@ -786,6 +823,8 @@ function App() {
             setExerciseNameInput('')
             setSetDrafts(createInitialSetDraft())
           }}
+          onWorkoutTitleInputChange={handleWorkoutTitleInputChange}
+          onSelectWorkoutTitleSuggestion={handleWorkoutTitleInputChange}
           onExerciseNameInputChange={setExerciseNameInput}
           onExerciseNameInputBlur={() =>
             setExerciseNameInput((prev) => resolveCanonicalExerciseName(prev, exerciseNames))

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Autocomplete,
   Box,
@@ -70,6 +71,23 @@ export function HistoryTab({
   onEditingExerciseNameInputBlur,
   onUpdateEditingSetDraft,
 }: HistoryTabProps) {
+  const [expandedExercises, setExpandedExercises] = useState<Record<string, boolean>>({})
+
+  function toggleExerciseExpanded(exerciseId: string) {
+    setExpandedExercises((prev) => ({
+      ...prev,
+      [exerciseId]: !prev[exerciseId],
+    }))
+  }
+
+  function getWorkoutDisplayTitle(title: string | null, exerciseNames: string[]) {
+    const normalizedTitle = title?.trim()
+    if (normalizedTitle) return normalizedTitle
+    if (exerciseNames.length === 0) return 'Untitled workout'
+    if (exerciseNames.length === 1) return exerciseNames[0]
+    return `${exerciseNames[0]} + ${exerciseNames.length - 1} more`
+  }
+
   return (
     <Paper className="panel" elevation={0}>
       <Stack spacing={1.25}>
@@ -91,6 +109,7 @@ export function HistoryTab({
               const exercises = [...(workout.workout_exercises ?? [])].sort(
                 (a, b) => a.position - b.position,
               )
+              const workoutExerciseNames = exercises.map((exercise) => exercise.exercise_name)
               const isExpanded = Boolean(expandedHistory[workout.id])
               const isEditing = editingWorkoutId === workout.id
               const editableExercises = historyEdits[workout.id] ?? []
@@ -103,6 +122,9 @@ export function HistoryTab({
                       <Stack direction="row" alignItems="center" justifyContent="space-between">
                         <Box>
                           <Typography sx={{ fontWeight: 700 }}>
+                            {getWorkoutDisplayTitle(workout.title, workoutExerciseNames)}
+                          </Typography>
+                          <Typography variant="body2" className="muted">
                             {new Date(workout.started_at).toLocaleString()}
                           </Typography>
                           <Typography variant="body2" className="muted">
@@ -128,98 +150,221 @@ export function HistoryTab({
                       </Stack>
 
                       <Collapse in={isExpanded} timeout="auto" unmountOnExit>
-                        <List disablePadding sx={{ display: 'grid', gap: 0.6, pt: 0.4 }}>
+                        <Stack spacing={0.8} sx={{ pt: 0.4 }}>
                           {isEditing
-                            ? visibleEditableExercises.map((exercise) => (
-                                <ListItem
-                                  key={exercise.id}
-                                  disablePadding
-                                  className="exercise-card history-exercise-card"
-                                  sx={{ p: 0.6 }}
-                                >
-                                  <Stack spacing={0.55} sx={{ width: '100%' }}>
-                                    <Stack direction="row" spacing={0.7}>
-                                      <TextField
-                                        fullWidth
-                                        size="small"
-                                        value={exercise.exercise_name}
-                                        onChange={(event) =>
-                                          onUpdateHistoryExerciseName(
-                                            workout.id,
-                                            exercise.id,
-                                            event.target.value,
-                                          )
-                                        }
-                                        sx={fieldSx}
-                                      />
-                                      <Button
-                                        size="small"
-                                        variant="outlined"
-                                        color="error"
-                                        onClick={() =>
-                                          onMarkHistoryExerciseDeleted(workout.id, exercise.id)
-                                        }
+                            ? visibleEditableExercises.map((exercise) => {
+                                const isExerciseExpanded = Boolean(expandedExercises[exercise.id])
+                                const setsSummary =
+                                  exercise.sets.length > 0
+                                    ? `${exercise.sets.length} set${exercise.sets.length !== 1 ? 's' : ''}`
+                                    : 'No sets'
+
+                                return (
+                                  <Paper
+                                    key={exercise.id}
+                                    className="card history-exercise-card"
+                                    elevation={0}
+                                    sx={{
+                                      width: '100%',
+                                      overflow: 'hidden',
+                                      border: '1px solid rgba(255,255,255,0.1)',
+                                    }}
+                                  >
+                                    <Stack spacing={0}>
+                                      {/* Exercise Header */}
+                                      <Stack
+                                        direction="row"
+                                        alignItems="center"
+                                        justifyContent="space-between"
+                                        sx={{
+                                          p: 0.7,
+                                          backgroundColor: 'rgba(0,0,0,0.2)',
+                                          borderBottom: isExerciseExpanded ? '1px solid rgba(255,255,255,0.1)' : 'none',
+                                          cursor: 'pointer',
+                                          transition: 'background-color 0.2s',
+                                          '&:hover': {
+                                            backgroundColor: 'rgba(0,0,0,0.3)',
+                                          },
+                                        }}
+                                        onClick={() => toggleExerciseExpanded(exercise.id)}
                                       >
-                                        Delete
-                                      </Button>
-                                    </Stack>
-                                    {exercise.sets.map((set) => (
-                                      <Stack key={set.id} direction="row" spacing={0.7}>
-                                        <TextField
+                                        <Stack
+                                          direction="row"
+                                          alignItems="center"
+                                          spacing={0.6}
+                                          sx={{ flex: 1, minWidth: 0 }}
+                                        >
+                                          <Typography sx={{ fontSize: '0.9rem', flexShrink: 0, width: '1rem', textAlign: 'center' }}>
+                                            {isExerciseExpanded ? '▼' : '▶'}
+                                          </Typography>
+                                          <Typography sx={{ fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            {exercise.exercise_name || 'Unnamed Exercise'}
+                                          </Typography>
+                                          <Typography variant="caption" className="muted" sx={{ flexShrink: 0 }}>
+                                            {setsSummary}
+                                          </Typography>
+                                        </Stack>
+                                        <Button
                                           size="small"
-                                          type="text"
-                                          label={`Set ${set.set_number} reps`}
-                                          value={set.reps}
-                                          onChange={(event) =>
-                                            onUpdateHistorySetField(
-                                              workout.id,
-                                              exercise.id,
-                                              set.id,
-                                              'reps',
-                                              event.target.value,
-                                            )
-                                          }
-                                          inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
-                                          sx={{ ...fieldSx, flex: 1 }}
-                                        />
-                                        <TextField
-                                          size="small"
-                                          type="text"
-                                          label={`Set ${set.set_number} kg`}
-                                          value={set.weight_kg}
-                                          onChange={(event) =>
-                                            onUpdateHistorySetField(
-                                              workout.id,
-                                              exercise.id,
-                                              set.id,
-                                              'weight_kg',
-                                              event.target.value,
-                                            )
-                                          }
-                                          inputProps={{
-                                            inputMode: 'decimal',
-                                            pattern: '[0-9]*[.,]?[0-9]*',
+                                          variant="outlined"
+                                          color="error"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            onMarkHistoryExerciseDeleted(workout.id, exercise.id)
                                           }}
-                                          sx={{ ...fieldSx, flex: 1 }}
-                                        />
+                                          sx={{ flexShrink: 0 }}
+                                        >
+                                          Delete
+                                        </Button>
                                       </Stack>
-                                    ))}
-                                  </Stack>
-                                </ListItem>
-                              ))
+
+                                      {/* Exercise Edit Form */}
+                                      <Collapse in={isExerciseExpanded} timeout="auto" unmountOnExit>
+                                        <Stack spacing={0.6} sx={{ p: 0.7 }}>
+                                          {/* Exercise Name */}
+                                          <TextField
+                                            fullWidth
+                                            size="small"
+                                            label="Exercise Name"
+                                            value={exercise.exercise_name}
+                                            onChange={(event) =>
+                                              onUpdateHistoryExerciseName(
+                                                workout.id,
+                                                exercise.id,
+                                                event.target.value,
+                                              )
+                                            }
+                                            sx={fieldSx}
+                                          />
+
+                                          {/* Sets */}
+                                          {exercise.sets.length > 0 && (
+                                            <Box sx={{ pt: 0.3 }}>
+                                              <Stack
+                                                direction="row"
+                                                spacing={0.7}
+                                                sx={{
+                                                  px: 0.5,
+                                                  mb: 0.4,
+                                                  borderBottom: '1px solid rgba(255,255,255,0.1)',
+                                                  pb: 0.3,
+                                                }}
+                                              >
+                                                <Typography
+                                                  sx={{
+                                                    flex: 0.4,
+                                                    fontSize: '0.7rem',
+                                                    color: '#c7cbf7',
+                                                    fontWeight: 700,
+                                                    textTransform: 'uppercase',
+                                                  }}
+                                                >
+                                                  Set
+                                                </Typography>
+                                                <Typography
+                                                  sx={{
+                                                    flex: 1,
+                                                    fontSize: '0.7rem',
+                                                    color: '#c7cbf7',
+                                                    fontWeight: 700,
+                                                    textTransform: 'uppercase',
+                                                  }}
+                                                >
+                                                  Reps
+                                                </Typography>
+                                                <Typography
+                                                  sx={{
+                                                    flex: 1,
+                                                    fontSize: '0.7rem',
+                                                    color: '#c7cbf7',
+                                                    fontWeight: 700,
+                                                    textTransform: 'uppercase',
+                                                  }}
+                                                >
+                                                  Weight (kg)
+                                                </Typography>
+                                              </Stack>
+
+                                              <Stack spacing={0.4}>
+                                                {exercise.sets.map((set) => (
+                                                  <Stack
+                                                    key={set.id}
+                                                    direction="row"
+                                                    spacing={0.7}
+                                                    sx={{ alignItems: 'center' }}
+                                                  >
+                                                    <Typography
+                                                      sx={{
+                                                        flex: 0.4,
+                                                        fontSize: '0.85rem',
+                                                        color: '#c7cbf7',
+                                                        textAlign: 'center',
+                                                        fontWeight: 600,
+                                                      }}
+                                                    >
+                                                      {set.set_number}
+                                                    </Typography>
+                                                    <TextField
+                                                      size="small"
+                                                      type="text"
+                                                      placeholder="Reps"
+                                                      value={set.reps}
+                                                      onChange={(event) =>
+                                                        onUpdateHistorySetField(
+                                                          workout.id,
+                                                          exercise.id,
+                                                          set.id,
+                                                          'reps',
+                                                          event.target.value,
+                                                        )
+                                                      }
+                                                      inputProps={{ inputMode: 'numeric', pattern: '[0-9]*' }}
+                                                      sx={{ ...fieldSx, flex: 1 }}
+                                                    />
+                                                    <TextField
+                                                      size="small"
+                                                      type="text"
+                                                      placeholder="Weight"
+                                                      value={set.weight_kg}
+                                                      onChange={(event) =>
+                                                        onUpdateHistorySetField(
+                                                          workout.id,
+                                                          exercise.id,
+                                                          set.id,
+                                                          'weight_kg',
+                                                          event.target.value,
+                                                        )
+                                                      }
+                                                      inputProps={{
+                                                        inputMode: 'decimal',
+                                                        pattern: '[0-9]*[.,]?[0-9]*',
+                                                      }}
+                                                      sx={{ ...fieldSx, flex: 1 }}
+                                                    />
+                                                  </Stack>
+                                                ))}
+                                              </Stack>
+                                            </Box>
+                                          )}
+                                        </Stack>
+                                      </Collapse>
+                                    </Stack>
+                                  </Paper>
+                                )
+                              })
                             : exercises.map((exercise) => {
                                 const sets = [...(exercise.workout_sets ?? [])].sort(
                                   (a, b) => a.set_number - b.set_number,
                                 )
 
                                 return (
-                                  <ListItem
+                                  <Paper
                                     key={exercise.id}
-                                    disablePadding
-                                    className="exercise-card history-exercise-card"
+                                    className="card history-exercise-card"
+                                    elevation={0}
                                     sx={{ p: 0.6 }}
                                   >
-                                    <Stack spacing={0.45} sx={{ width: '100%' }}>
+                                    <Stack spacing={0.45}>
                                       <Typography sx={{ fontWeight: 700 }}>
                                         {exercise.exercise_name}
                                       </Typography>
@@ -229,15 +374,23 @@ export function HistoryTab({
                                         </Typography>
                                       ))}
                                     </Stack>
-                                  </ListItem>
+                                  </Paper>
                                 )
                               })}
-                        </List>
-                        {isEditing && (
-                          <Stack spacing={0.7}>
-                            <Paper className="card" elevation={0} sx={{ p: 0.6 }}>
+
+                          {/* Add New Exercise */}
+                          {isEditing && (
+                            <Paper
+                              className="card"
+                              elevation={0}
+                              sx={{
+                                p: 0.7,
+                                border: '1px dashed rgba(255,255,255,0.2)',
+                                backgroundColor: 'rgba(255,255,255,0.03)',
+                              }}
+                            >
                               <Typography variant="body2" sx={{ fontSize: '0.95rem', mb: 0.6, fontWeight: 700 }}>
-                                Add New Exercise
+                                ➕ Add New Exercise
                               </Typography>
 
                               <Autocomplete
@@ -259,8 +412,10 @@ export function HistoryTab({
                               />
 
                               <Stack direction="row" spacing={0.7} sx={{ mb: 0.6 }}>
-                                <Typography sx={{ flex: 1, fontSize: '0.75rem', color: '#c7cbf7' }}>Reps</Typography>
-                                <Typography sx={{ flex: 1, fontSize: '0.75rem', color: '#c7cbf7' }}>
+                                <Typography sx={{ flex: 1, fontSize: '0.75rem', color: '#c7cbf7', fontWeight: 700 }}>
+                                  Reps
+                                </Typography>
+                                <Typography sx={{ flex: 1, fontSize: '0.75rem', color: '#c7cbf7', fontWeight: 700 }}>
                                   Weight (kg)
                                 </Typography>
                               </Stack>
@@ -317,17 +472,24 @@ export function HistoryTab({
                                 </Button>
                               </Stack>
                             </Paper>
+                          )}
 
+                          {/* Save/Cancel Buttons */}
+                          {isEditing && (
                             <Stack direction="row" spacing={0.8}>
-                              <Button size="small" variant="contained" onClick={() => onSaveWorkoutEdit(workout.id)}>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                onClick={() => onSaveWorkoutEdit(workout.id)}
+                              >
                                 Save changes
                               </Button>
                               <Button size="small" variant="outlined" onClick={onCancelWorkoutEdit}>
                                 Cancel
                               </Button>
                             </Stack>
-                          </Stack>
-                        )}
+                          )}
+                        </Stack>
                       </Collapse>
                     </Stack>
                   </Paper>

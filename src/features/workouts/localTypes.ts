@@ -16,6 +16,7 @@ export type LocalWorkoutExercise = {
 export type ActiveWorkout = {
   id: string
   startedAt: string
+  title: string | null
   exercises: LocalWorkoutExercise[]
 }
 
