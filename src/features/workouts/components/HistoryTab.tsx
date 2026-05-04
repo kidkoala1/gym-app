@@ -389,7 +389,10 @@ export function HistoryTab({
                                 backgroundColor: 'rgba(255,255,255,0.03)',
                               }}
                             >
-                              <Typography variant="body2" sx={{ fontSize: '0.95rem', mb: 0.6, fontWeight: 700 }}>
+                              <Typography
+                                variant="body2"
+                                sx={{ fontSize: '0.95rem', mb: 0.6, fontWeight: 700 }}
+                              >
                                 ➕ Add New Exercise
                               </Typography>
 

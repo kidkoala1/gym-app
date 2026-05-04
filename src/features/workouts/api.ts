@@ -17,6 +17,24 @@ type SupabaseErrorLike = {
   code?: string | null
 }
 
+function isMissingColumnError(error: SupabaseErrorLike, table: string, column: string): boolean {
+  const code = (error.code ?? '').toUpperCase()
+  const message = error.message.toLowerCase()
+  const mentionsTable = message.includes(table) || message.includes(`'${table}'`)
+  const mentionsColumn = message.includes(column) || message.includes(`'${column}'`)
+
+  return (
+    code === 'PGRST204' ||
+    code === '42703' ||
+    (mentionsColumn && message.includes('schema cache')) ||
+    (mentionsColumn && mentionsTable && message.includes('schema cache')) ||
+    (mentionsColumn && message.includes('could not find')) ||
+    (mentionsColumn && message.includes('does not exist')) ||
+    (mentionsColumn && message.includes('column')) ||
+    (mentionsColumn && message.includes('select'))
+  )
+}
+
 function throwSupabaseError(error: { message: string; code?: string | null }) {
   const enriched = new Error(error.message) as Error & { code?: string | null }
   enriched.code = error.code
@@ -128,8 +146,17 @@ export async function createWorkout(userId: string, startedAt: string, title?: s
     .select('id,user_id,started_at,finished_at,title,created_at')
     .single()
 
-  if (error) throwSupabaseError(error)
-  return data as WorkoutRow
+  if (!error) return data as WorkoutRow
+  if (!isMissingColumnError(error, 'workouts', 'title')) throwSupabaseError(error)
+
+  const fallback = await supabase
+    .from('workouts')
+    .insert({ user_id: userId, started_at: startedAt })
+    .select('id,user_id,started_at,finished_at,created_at')
+    .single()
+
+  if (fallback.error) throwSupabaseError(fallback.error)
+  return { ...(fallback.data as Omit<WorkoutRow, 'title'>), title: null }
 }
 
 export async function finishWorkout(
@@ -146,8 +173,19 @@ export async function finishWorkout(
     .select('id,user_id,started_at,finished_at,title,created_at')
     .single()
 
-  if (error) throwSupabaseError(error)
-  return data as WorkoutRow
+  if (!error) return data as WorkoutRow
+  if (!isMissingColumnError(error, 'workouts', 'title')) throwSupabaseError(error)
+
+  const fallback = await supabase
+    .from('workouts')
+    .update({ finished_at: finishedAt })
+    .eq('id', workoutId)
+    .eq('user_id', userId)
+    .select('id,user_id,started_at,finished_at,created_at')
+    .single()
+
+  if (fallback.error) throwSupabaseError(fallback.error)
+  return { ...(fallback.data as Omit<WorkoutRow, 'title'>), title: null }
 }
 
 export async function deleteWorkout(workoutId: string, userId: string): Promise<void> {
@@ -240,8 +278,21 @@ export async function listRecentWorkouts(
     .order('started_at', { ascending: false })
     .limit(limit)
 
-  if (error) throwSupabaseError(error)
-  return (data ?? []) as WorkoutWithExerciseRefs[]
+  if (!error) return (data ?? []) as WorkoutWithExerciseRefs[]
+  if (!isMissingColumnError(error, 'workouts', 'title')) throwSupabaseError(error)
+
+  const fallback = await supabase
+    .from('workouts')
+    .select('id,started_at,finished_at,workout_exercises(id)')
+    .eq('user_id', userId)
+    .order('started_at', { ascending: false })
+    .limit(limit)
+
+  if (fallback.error) throwSupabaseError(fallback.error)
+  return ((fallback.data ?? []) as Array<Omit<WorkoutWithExerciseRefs, 'title'>>).map((workout) => ({
+    ...workout,
+    title: null,
+  }))
 }
 
 export async function listWorkoutHistory(userId: string): Promise<WorkoutHistoryRow[]> {
@@ -253,8 +304,22 @@ export async function listWorkoutHistory(userId: string): Promise<WorkoutHistory
     .eq('user_id', userId)
     .order('started_at', { ascending: false })
 
-  if (error) throwSupabaseError(error)
-  return (data ?? []) as WorkoutHistoryRow[]
+  if (!error) return (data ?? []) as WorkoutHistoryRow[]
+  if (!isMissingColumnError(error, 'workouts', 'title')) throwSupabaseError(error)
+
+  const fallback = await supabase
+    .from('workouts')
+    .select(
+      'id,started_at,finished_at,workout_exercises(id,exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
+    )
+    .eq('user_id', userId)
+    .order('started_at', { ascending: false })
+
+  if (fallback.error) throwSupabaseError(fallback.error)
+  return ((fallback.data ?? []) as Array<Omit<WorkoutHistoryRow, 'title'>>).map((workout) => ({
+    ...workout,
+    title: null,
+  }))
 }
 
 export async function getProgressSeries(
