@@ -165,7 +165,10 @@ export async function insertWorkoutExercise(
     .select('id,workout_id,exercise_name,position')
     .single()
 
-  if (error) throwSupabaseError(error)
+  if (error) {
+    console.error('insertWorkoutExercise error:', error)
+    throwSupabaseError(error)
+  }
   return data as WorkoutExerciseRow
 }
 

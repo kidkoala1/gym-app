@@ -31,6 +31,7 @@ export type EditableHistoryExercise = {
   exercise_name: string
   sets: EditableSet[]
   deleted?: boolean
+  isNew?: boolean
 }
 
 export type SettingsView = 'menu' | 'exercise-list' | 'profile'

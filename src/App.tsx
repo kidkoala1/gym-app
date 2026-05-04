@@ -25,7 +25,7 @@ import { SettingsTab } from './features/settings/components/SettingsTab'
 import { HistoryTab } from './features/workouts/components/HistoryTab'
 import { ProgressTab } from './features/workouts/components/ProgressTab'
 import { WorkoutTab } from './features/workouts/components/WorkoutTab'
-import type { ExerciseRow } from './types/db'
+import type { ExerciseRow, WorkoutSetInput } from './types/db'
 import {
   createExercise,
   createWorkout,
@@ -121,6 +121,8 @@ function App() {
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({})
   const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null)
   const [historyEdits, setHistoryEdits] = useState<Record<string, EditableHistoryExercise[]>>({})
+  const [editingExerciseNameInput, setEditingExerciseNameInput] = useState('')
+  const [editingSetDrafts, setEditingSetDrafts] = useState<SetDraft[]>(createInitialSetDraft())
   const [workoutMenuAnchor, setWorkoutMenuAnchor] = useState<HTMLElement | null>(null)
   const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null)
   const [cancelWorkoutConfirmOpen, setCancelWorkoutConfirmOpen] = useState(false)
@@ -348,6 +350,8 @@ function App() {
     }))
     setEditingWorkoutId(workoutId)
     setExpandedHistory((prev) => ({ ...prev, [workoutId]: true }))
+    setEditingExerciseNameInput('')
+    setEditingSetDrafts(createInitialSetDraft())
     closeWorkoutMenu()
   }
 
@@ -359,6 +363,8 @@ function App() {
       return next
     })
     setEditingWorkoutId(null)
+    setEditingExerciseNameInput('')
+    setEditingSetDrafts(createInitialSetDraft())
   }
 
   async function removeWorkoutFromHistory(workoutId: string) {
@@ -416,12 +422,68 @@ function App() {
     }))
   }
 
+  function updateEditingSetDraft(index: number, field: keyof SetDraft, value: string) {
+    setEditingSetDrafts((prev) => {
+      const next = prev.map((row, i) => (i === index ? { ...row, [field]: value } : row))
+      const last = next[next.length - 1]
+      const editedIsLast = index === next.length - 1
+      const lastFilled = last.reps.trim() !== '' && last.weight.trim() !== ''
+
+      if (editedIsLast && lastFilled) next.push({ reps: '', weight: last.weight.trim() })
+      return next
+    })
+  }
+
+  function addExerciseToHistoryEdit(workoutId: string) {
+    const cleanedName = resolveCanonicalExerciseName(editingExerciseNameInput, exerciseNames).trim()
+    if (!cleanedName) return
+
+    const completedSets = editingSetDrafts
+      .filter((set) => set.reps.trim() !== '' && set.weight.trim() !== '')
+      .map((set, index) => ({
+        id: `temp-${Date.now()}-${index}`,
+        set_number: index + 1,
+        reps: String(set.reps),
+        weight_kg: String(set.weight),
+      }))
+      .filter((set) => Number.isFinite(Number(set.reps)) && Number.isFinite(parseLocalizedDecimal(set.weight_kg)))
+      .filter((set) => Number(set.reps) > 0 && parseLocalizedDecimal(set.weight_kg) >= 0)
+
+    if (completedSets.length === 0) return
+
+    const newExercise: EditableHistoryExercise = {
+      id: `temp-${Date.now()}`,
+      exercise_name: cleanedName,
+      sets: completedSets,
+      isNew: true,
+    }
+
+    setHistoryEdits((prev) => ({
+      ...prev,
+      [workoutId]: [...(prev[workoutId] ?? []), newExercise],
+    }))
+
+    setEditingExerciseNameInput('')
+    setEditingSetDrafts(createInitialSetDraft())
+  }
+
+  function cancelAddingExerciseToHistory() {
+    setEditingExerciseNameInput('')
+    setEditingSetDrafts(createInitialSetDraft())
+  }
+
   async function saveWorkoutEdit(workoutId: string) {
     const draft = historyEdits[workoutId]
     if (!draft) return
 
     try {
-      for (const exercise of draft) {
+      // Refresh auth session before making database changes
+      const { data: sessionData, error: sessionError } = await supabase.auth.refreshSession()
+      if (sessionError || !sessionData.session) {
+        throw new Error('Authentication session expired. Please refresh and try again.')
+      }
+
+      for (const [index, exercise] of draft.entries()) {
         if (exercise.deleted) {
           await deleteWorkoutExercise(exercise.id)
           continue
@@ -430,16 +492,44 @@ function App() {
         const cleanedName = resolveCanonicalExerciseName(exercise.exercise_name, exerciseNames).trim()
         if (!cleanedName) throw new Error('Exercise title cannot be empty.')
 
-        await updateWorkoutExerciseName(exercise.id, cleanedName)
+        if (exercise.isNew) {
+          // New exercise - insert it (use index + 1 for position)
+          const position = index + 1
+          const workoutExercise = await insertWorkoutExercise(workoutId, cleanedName, position)
 
-        for (const set of exercise.sets) {
-          const reps = Number(set.reps)
-          const weight = parseLocalizedDecimal(set.weight_kg)
+          const completedSets: WorkoutSetInput[] = exercise.sets
+            .filter((set) => Number.isFinite(Number(set.reps)) && Number.isFinite(parseLocalizedDecimal(set.weight_kg)))
+            .filter((set) => Number(set.reps) > 0 && parseLocalizedDecimal(set.weight_kg) >= 0)
+            .map((set) => ({
+              reps: Number(set.reps),
+              weightKg: parseLocalizedDecimal(set.weight_kg),
+            }))
 
-          if (!Number.isFinite(reps) || reps <= 0) throw new Error('Reps must be greater than 0.')
-          if (!Number.isFinite(weight) || weight < 0) throw new Error('Weight must be 0 or greater.')
+          if (completedSets.length > 0) {
+            await insertWorkoutSets(workoutExercise.id, completedSets)
+          }
 
-          await updateWorkoutSet(set.id, reps, weight)
+          if (!exerciseNames.some((name) => name.toLowerCase() === cleanedName.toLowerCase())) {
+            try {
+              await createExerciseMutation.mutateAsync(cleanedName)
+            } catch (error) {
+              const maybeDuplicate = error as Error & { code?: string | null }
+              if (maybeDuplicate.code !== '23505') throw error
+            }
+          }
+        } else {
+          // Existing exercise - update it
+          await updateWorkoutExerciseName(exercise.id, cleanedName)
+
+          for (const set of exercise.sets) {
+            const reps = Number(set.reps)
+            const weight = parseLocalizedDecimal(set.weight_kg)
+
+            if (!Number.isFinite(reps) || reps <= 0) throw new Error('Reps must be greater than 0.')
+            if (!Number.isFinite(weight) || weight < 0) throw new Error('Weight must be 0 or greater.')
+
+            await updateWorkoutSet(set.id, reps, weight)
+          }
         }
       }
 
@@ -450,6 +540,8 @@ function App() {
         delete next[workoutId]
         return next
       })
+      setEditingExerciseNameInput('')
+      setEditingSetDrafts(createInitialSetDraft())
       showSuccess('Workout updated.')
     } catch (error) {
       showError(error instanceof Error ? error.message : 'Could not update workout.')
@@ -715,6 +807,9 @@ function App() {
           expandedHistory={expandedHistory}
           editingWorkoutId={editingWorkoutId}
           historyEdits={historyEdits}
+          exerciseNames={exerciseNames}
+          editingExerciseNameInput={editingExerciseNameInput}
+          editingSetDrafts={editingSetDrafts}
           fieldSx={fieldSx}
           onToggleExpanded={(workoutId) =>
             setExpandedHistory((prev) => ({ ...prev, [workoutId]: !prev[workoutId] }))
@@ -725,6 +820,13 @@ function App() {
           onUpdateHistorySetField={updateHistorySetField}
           onSaveWorkoutEdit={saveWorkoutEdit}
           onCancelWorkoutEdit={cancelWorkoutEdit}
+          onAddExerciseToHistoryEdit={addExerciseToHistoryEdit}
+          onCancelAddingExerciseToHistory={cancelAddingExerciseToHistory}
+          onEditingExerciseNameInputChange={setEditingExerciseNameInput}
+          onEditingExerciseNameInputBlur={() =>
+            setEditingExerciseNameInput((prev) => resolveCanonicalExerciseName(prev, exerciseNames))
+          }
+          onUpdateEditingSetDraft={updateEditingSetDraft}
         />
       ) : (
         <SettingsTab

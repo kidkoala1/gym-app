@@ -1,4 +1,5 @@
 import {
+  Autocomplete,
   Box,
   Button,
   Collapse,
@@ -12,7 +13,7 @@ import {
   Typography,
 } from '@mui/material'
 import type { WorkoutHistoryRow } from '../../../types/db'
-import type { EditableHistoryExercise } from '../localTypes'
+import type { EditableHistoryExercise, SetDraft } from '../localTypes'
 
 type HistoryTabProps = {
   isLoading: boolean
@@ -21,6 +22,9 @@ type HistoryTabProps = {
   expandedHistory: Record<string, boolean>
   editingWorkoutId: string | null
   historyEdits: Record<string, EditableHistoryExercise[]>
+  exerciseNames: string[]
+  editingExerciseNameInput: string
+  editingSetDrafts: SetDraft[]
   fieldSx: object
   onToggleExpanded: (workoutId: string) => void
   onOpenWorkoutMenu: (event: React.MouseEvent<HTMLElement>, workoutId: string) => void
@@ -35,6 +39,11 @@ type HistoryTabProps = {
   ) => void
   onSaveWorkoutEdit: (workoutId: string) => void
   onCancelWorkoutEdit: () => void
+  onAddExerciseToHistoryEdit: (workoutId: string) => void
+  onCancelAddingExerciseToHistory: () => void
+  onEditingExerciseNameInputChange: (value: string) => void
+  onEditingExerciseNameInputBlur: () => void
+  onUpdateEditingSetDraft: (index: number, field: keyof SetDraft, value: string) => void
 }
 
 export function HistoryTab({
@@ -44,6 +53,9 @@ export function HistoryTab({
   expandedHistory,
   editingWorkoutId,
   historyEdits,
+  exerciseNames,
+  editingExerciseNameInput,
+  editingSetDrafts,
   fieldSx,
   onToggleExpanded,
   onOpenWorkoutMenu,
@@ -52,6 +64,11 @@ export function HistoryTab({
   onUpdateHistorySetField,
   onSaveWorkoutEdit,
   onCancelWorkoutEdit,
+  onAddExerciseToHistoryEdit,
+  onCancelAddingExerciseToHistory,
+  onEditingExerciseNameInputChange,
+  onEditingExerciseNameInputBlur,
+  onUpdateEditingSetDraft,
 }: HistoryTabProps) {
   return (
     <Paper className="panel" elevation={0}>
@@ -217,13 +234,98 @@ export function HistoryTab({
                               })}
                         </List>
                         {isEditing && (
-                          <Stack direction="row" spacing={0.8} sx={{ pt: 0.7 }}>
-                            <Button size="small" variant="contained" onClick={() => onSaveWorkoutEdit(workout.id)}>
-                              Save changes
-                            </Button>
-                            <Button size="small" variant="outlined" onClick={onCancelWorkoutEdit}>
-                              Cancel
-                            </Button>
+                          <Stack spacing={0.7}>
+                            <Paper className="card" elevation={0} sx={{ p: 0.6 }}>
+                              <Typography variant="body2" sx={{ fontSize: '0.95rem', mb: 0.6, fontWeight: 700 }}>
+                                Add New Exercise
+                              </Typography>
+
+                              <Autocomplete
+                                freeSolo
+                                options={exerciseNames}
+                                inputValue={editingExerciseNameInput}
+                                onInputChange={(_, value) => onEditingExerciseNameInputChange(value)}
+                                renderInput={(params) => (
+                                  <TextField
+                                    {...params}
+                                    size="small"
+                                    label="Exercise"
+                                    placeholder="Type exercise name"
+                                    sx={fieldSx}
+                                    onBlur={onEditingExerciseNameInputBlur}
+                                  />
+                                )}
+                                sx={{ mb: 0.7 }}
+                              />
+
+                              <Stack direction="row" spacing={0.7} sx={{ mb: 0.6 }}>
+                                <Typography sx={{ flex: 1, fontSize: '0.75rem', color: '#c7cbf7' }}>Reps</Typography>
+                                <Typography sx={{ flex: 1, fontSize: '0.75rem', color: '#c7cbf7' }}>
+                                  Weight (kg)
+                                </Typography>
+                              </Stack>
+
+                              <Stack spacing={0.5} sx={{ mb: 0.6 }}>
+                                {editingSetDrafts.map((set, idx) => (
+                                  <Stack key={`set-${idx}`} direction="row" spacing={0.5}>
+                                    <TextField
+                                      size="small"
+                                      type="text"
+                                      placeholder="Reps"
+                                      value={set.reps}
+                                      onChange={(event) =>
+                                        onUpdateEditingSetDraft(idx, 'reps', event.target.value)
+                                      }
+                                      inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', min: 1 }}
+                                      sx={{ ...fieldSx, flex: 1 }}
+                                    />
+                                    <TextField
+                                      size="small"
+                                      type="text"
+                                      placeholder="Weight (kg)"
+                                      value={set.weight}
+                                      onChange={(event) =>
+                                        onUpdateEditingSetDraft(idx, 'weight', event.target.value)
+                                      }
+                                      inputProps={{
+                                        inputMode: 'decimal',
+                                        pattern: '[0-9]*[.,]?[0-9]*',
+                                        min: 0,
+                                        step: 0.5,
+                                      }}
+                                      sx={{ ...fieldSx, flex: 1 }}
+                                    />
+                                  </Stack>
+                                ))}
+                              </Stack>
+
+                              <Stack direction="row" spacing={0.7}>
+                                <Button
+                                  size="small"
+                                  variant="contained"
+                                  onClick={() => onAddExerciseToHistoryEdit(workout.id)}
+                                  fullWidth
+                                >
+                                  Add Exercise
+                                </Button>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={onCancelAddingExerciseToHistory}
+                                >
+                                  Clear
+                                </Button>
+                              </Stack>
+                            </Paper>
+
+                            <Stack direction="row" spacing={0.8}>
+                              <Button size="small" variant="contained" onClick={() => onSaveWorkoutEdit(workout.id)}>
+                                Save changes
+                              </Button>
+                              <Button size="small" variant="outlined" onClick={onCancelWorkoutEdit}>
+                                Cancel
+                              </Button>
+                            </Stack>
                           </Stack>
                         )}
                       </Collapse>
