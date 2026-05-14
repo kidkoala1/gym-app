@@ -25,7 +25,7 @@ import { SettingsTab } from './features/settings/components/SettingsTab'
 import { HistoryTab } from './features/workouts/components/HistoryTab'
 import { ProgressTab } from './features/workouts/components/ProgressTab'
 import { WorkoutTab } from './features/workouts/components/WorkoutTab'
-import type { ExerciseRow, WorkoutSetInput } from './types/db'
+import type { ExerciseInsightHistoryRow, ExerciseRow, WorkoutHistoryRow, WorkoutSetInput } from './types/db'
 import {
   createExercise,
   createWorkout,
@@ -35,7 +35,9 @@ import {
   finishWorkout as finishWorkoutApi,
   insertWorkoutExercise,
   insertWorkoutSets,
+  listExerciseInsightHistory,
   listExercises,
+  listLoggedExerciseNames,
   listWorkoutHistory,
   updateWorkoutExerciseName,
   updateWorkoutSet,
@@ -118,6 +120,58 @@ function pickTopSetInSession(sets: Array<{ reps: number; weight_kg: number }>, p
   )
 }
 
+function buildExerciseInsightsFromWorkouts(
+  workouts: Array<Pick<WorkoutHistoryRow | ExerciseInsightHistoryRow, 'started_at' | 'workout_exercises'>>,
+  targetName: string,
+  exerciseNames: string[],
+): ExerciseWeightInsights | null {
+  const canonicalNameCache = new Map<string, string>()
+  const canonicalizeToLower = (name: string) => {
+    const cacheKey = name.trim().toLowerCase()
+    if (canonicalNameCache.has(cacheKey)) return canonicalNameCache.get(cacheKey) as string
+
+    const canonical = resolveCanonicalExerciseName(name, exerciseNames).toLowerCase()
+    canonicalNameCache.set(cacheKey, canonical)
+    return canonical
+  }
+
+  if (!targetName) return null
+
+  let lastSession: ExerciseInsightSet | null = null
+  let recentBest: ExerciseInsightSet | null = null
+  const cutoffMs = Date.now() - RECENT_BEST_WINDOW_DAYS * 24 * 60 * 60 * 1000
+
+  for (const workout of workouts) {
+    const matchingExercises = (workout.workout_exercises ?? []).filter(
+      (exercise) => canonicalizeToLower(exercise.exercise_name) === targetName,
+    )
+    if (matchingExercises.length === 0) continue
+
+    const topSet = pickTopSetInSession(
+      matchingExercises.flatMap((exercise) => exercise.workout_sets ?? []),
+      workout.started_at,
+    )
+    if (!topSet) continue
+
+    if (!lastSession) {
+      lastSession = topSet
+    }
+
+    const workoutTime = new Date(workout.started_at).getTime()
+    if (Number.isFinite(workoutTime) && workoutTime >= cutoffMs) {
+      if (!recentBest || compareSetsByStrength(topSet, recentBest) > 0) {
+        recentBest = topSet
+      }
+    }
+  }
+
+  return {
+    suggestedToday: lastSession ?? recentBest,
+    lastSession,
+    recentBest,
+  }
+}
+
 function App() {
   const appVersion = __APP_VERSION__
   const queryClient = useQueryClient()
@@ -180,7 +234,7 @@ function App() {
   const historyWorkoutsQuery = useQuery({
     queryKey: ['workout-history', user?.id],
     queryFn: () => listWorkoutHistory(user!.id),
-    enabled: Boolean(user?.id),
+    enabled: Boolean(user?.id) && activeTab === 'history',
   })
 
   const profileQuery = useQuery({
@@ -188,8 +242,16 @@ function App() {
     queryFn: () => getProfile(user!.id),
     enabled: Boolean(user?.id),
   })
+  const loggedExerciseNamesQuery = useQuery({
+    queryKey: ['logged-exercise-names', user?.id],
+    queryFn: () => listLoggedExerciseNames(user!.id),
+    enabled: Boolean(user?.id) && (activeTab === 'progress' || (activeTab === 'workout' && isAddingExercise)),
+  })
   const historyErrorMessage = historyWorkoutsQuery.isError
     ? getErrorMessage(historyWorkoutsQuery.error, 'Could not load workout history.')
+    : null
+  const loggedExerciseNamesErrorMessage = loggedExerciseNamesQuery.isError
+    ? getErrorMessage(loggedExerciseNamesQuery.error, 'Could not load logged exercises.')
     : null
 
   const exerciseLibrary = useMemo(() => exercisesQuery.data ?? [], [exercisesQuery.data])
@@ -208,55 +270,51 @@ function App() {
     return names.sort((a, b) => a.localeCompare(b))
   }, [exerciseLibrary])
 
+  const canonicalExerciseInsightName = useMemo(
+    () => resolveCanonicalExerciseName(exerciseNameInput, exerciseNames).toLowerCase(),
+    [exerciseNameInput, exerciseNames],
+  )
+  const exerciseInsightQueryNames = useMemo(() => {
+    if (!canonicalExerciseInsightName) return []
+
+    const names = new Set<string>()
+    for (const name of [...exerciseNames, ...(loggedExerciseNamesQuery.data ?? [])]) {
+      const canonicalName = resolveCanonicalExerciseName(name, exerciseNames)
+      if (canonicalName.toLowerCase() === canonicalExerciseInsightName) {
+        names.add(name)
+        names.add(canonicalName)
+      }
+    }
+
+    const canonicalName = resolveCanonicalExerciseName(exerciseNameInput, exerciseNames).trim()
+    if (canonicalName) names.add(canonicalName)
+    return [...names]
+  }, [canonicalExerciseInsightName, exerciseNameInput, exerciseNames, loggedExerciseNamesQuery.data])
+
+  const exerciseInsightsQuery = useQuery({
+    queryKey: ['exercise-insights', user?.id, exerciseInsightQueryNames],
+    queryFn: () => listExerciseInsightHistory(user!.id, exerciseInsightQueryNames),
+    enabled:
+      Boolean(user?.id) &&
+      activeTab === 'workout' &&
+      isAddingExercise &&
+      exerciseInsightQueryNames.length > 0,
+  })
+
   const exerciseInsights = useMemo<ExerciseWeightInsights | null>(() => {
-    const canonicalNameCache = new Map<string, string>()
-    const canonicalizeToLower = (name: string) => {
-      const cacheKey = name.trim().toLowerCase()
-      if (canonicalNameCache.has(cacheKey)) return canonicalNameCache.get(cacheKey) as string
+    const queryInsights = buildExerciseInsightsFromWorkouts(
+      exerciseInsightsQuery.data ?? [],
+      canonicalExerciseInsightName,
+      exerciseNames,
+    )
+    if (queryInsights?.suggestedToday || !historyWorkoutsQuery.data) return queryInsights
 
-      const canonical = resolveCanonicalExerciseName(name, exerciseNames).toLowerCase()
-      canonicalNameCache.set(cacheKey, canonical)
-      return canonical
-    }
-
-    const targetName = canonicalizeToLower(exerciseNameInput)
-    if (!targetName) return null
-
-    const workouts = historyWorkoutsQuery.data ?? []
-    let lastSession: ExerciseInsightSet | null = null
-    let recentBest: ExerciseInsightSet | null = null
-    const cutoffMs = Date.now() - RECENT_BEST_WINDOW_DAYS * 24 * 60 * 60 * 1000
-
-    for (const workout of workouts) {
-      const matchingExercises = (workout.workout_exercises ?? []).filter(
-        (exercise) => canonicalizeToLower(exercise.exercise_name) === targetName,
-      )
-      if (matchingExercises.length === 0) continue
-
-      const topSet = pickTopSetInSession(
-        matchingExercises.flatMap((exercise) => exercise.workout_sets ?? []),
-        workout.started_at,
-      )
-      if (!topSet) continue
-
-      if (!lastSession) {
-        lastSession = topSet
-      }
-
-      const workoutTime = new Date(workout.started_at).getTime()
-      if (Number.isFinite(workoutTime) && workoutTime >= cutoffMs) {
-        if (!recentBest || compareSetsByStrength(topSet, recentBest) > 0) {
-          recentBest = topSet
-        }
-      }
-    }
-
-    return {
-      suggestedToday: lastSession ?? recentBest,
-      lastSession,
-      recentBest,
-    }
-  }, [exerciseNameInput, exerciseNames, historyWorkoutsQuery.data])
+    return buildExerciseInsightsFromWorkouts(
+      historyWorkoutsQuery.data,
+      canonicalExerciseInsightName,
+      exerciseNames,
+    )
+  }, [canonicalExerciseInsightName, exerciseInsightsQuery.data, exerciseNames, historyWorkoutsQuery.data])
 
   useEffect(() => {
     const metadataDisplay =
@@ -295,6 +353,9 @@ function App() {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['workout-history', user?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['exercise-progress'] })
+      await queryClient.invalidateQueries({ queryKey: ['exercise-insights'] })
+      await queryClient.invalidateQueries({ queryKey: ['logged-exercise-names', user?.id] })
     },
   })
 
@@ -325,6 +386,9 @@ function App() {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['workout-history', user?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['exercise-progress'] })
+      await queryClient.invalidateQueries({ queryKey: ['exercise-insights'] })
+      await queryClient.invalidateQueries({ queryKey: ['logged-exercise-names', user?.id] })
     },
   })
 
@@ -659,6 +723,9 @@ function App() {
       }
 
       await queryClient.invalidateQueries({ queryKey: ['workout-history', user?.id] })
+      await queryClient.invalidateQueries({ queryKey: ['exercise-progress'] })
+      await queryClient.invalidateQueries({ queryKey: ['exercise-insights'] })
+      await queryClient.invalidateQueries({ queryKey: ['logged-exercise-names', user?.id] })
       setEditingWorkoutId(null)
       setHistoryEdits((prev) => {
         const next = { ...prev }
@@ -825,6 +892,9 @@ function App() {
       }
 
       await queryClient.invalidateQueries({ queryKey: ['workout-history', user.id] })
+      await queryClient.invalidateQueries({ queryKey: ['exercise-progress'] })
+      await queryClient.invalidateQueries({ queryKey: ['exercise-insights'] })
+      await queryClient.invalidateQueries({ queryKey: ['logged-exercise-names', user.id] })
       setIsAddingExercise(false)
       setExerciseNameInput('')
       setSetDrafts(createInitialSetDraft())
@@ -921,7 +991,7 @@ function App() {
           setDrafts={setDrafts}
           exerciseNames={exerciseNames}
           exercisesLoading={exercisesQuery.isLoading}
-          exerciseInsightsLoading={historyWorkoutsQuery.isLoading}
+          exerciseInsightsLoading={exerciseInsightsQuery.isLoading}
           exerciseInsights={exerciseInsights}
           fieldSx={fieldSx}
           startWorkoutPending={startWorkoutMutation.isPending}
@@ -949,10 +1019,10 @@ function App() {
         />
       ) : activeTab === 'progress' ? (
         <ProgressTab
-          isLoading={historyWorkoutsQuery.isLoading}
-          workouts={historyWorkoutsQuery.data ?? []}
+          exerciseNames={loggedExerciseNamesQuery.data ?? []}
+          exerciseNamesLoading={loggedExerciseNamesQuery.isLoading}
+          exerciseNamesErrorMessage={loggedExerciseNamesErrorMessage}
           userId={user.id}
-          errorMessage={historyErrorMessage}
         />
       ) : activeTab === 'history' ? (
         <HistoryTab

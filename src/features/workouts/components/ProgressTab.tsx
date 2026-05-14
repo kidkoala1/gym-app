@@ -2,14 +2,21 @@ import { Box, Button, CircularProgress, MenuItem, Paper, Stack, TextField, Typog
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { getProfile } from '../../profile/api'
-import { listWorkoutHistory, searchPublicProfiles } from '../api'
-import type { WorkoutHistoryRow } from '../../../types/db'
+import {
+  getProgressSeries,
+  listExerciseInsightHistory,
+  listLoggedExerciseNames,
+  listWorkoutHistory,
+  searchPublicProfiles,
+} from '../api'
+import { resolveCanonicalExerciseName } from '../defaultExercises'
+import type { ExerciseInsightHistoryRow, ProgressSeriesRow, WorkoutHistoryRow } from '../../../types/db'
 
 type ProgressTabProps = {
-  isLoading: boolean
-  workouts: WorkoutHistoryRow[]
+  exerciseNames: string[]
+  exerciseNamesLoading: boolean
+  exerciseNamesErrorMessage?: string | null
   userId: string
-  errorMessage?: string | null
 }
 
 type RangeKey = '30d' | '90d' | '365d' | 'all'
@@ -42,6 +49,7 @@ const RANGE_OPTIONS: Array<{ key: RangeKey; label: string }> = [
   { key: '365d', label: '1Y' },
   { key: 'all', label: 'All' },
 ]
+const EMPTY_DAILY_PROGRESS: DailyProgressEntry[] = []
 
 function toDateKey(value: string): string {
   return new Date(value).toISOString().slice(0, 10)
@@ -60,6 +68,11 @@ function getRangeCutoff(range: RangeKey): number | null {
   const now = Date.now()
   const days = range === '30d' ? 30 : range === '90d' ? 90 : 365
   return now - days * 24 * 60 * 60 * 1000
+}
+
+function getRangeDays(range: RangeKey): number | null {
+  if (range === 'all') return null
+  return range === '30d' ? 30 : range === '90d' ? 90 : 365
 }
 
 function combineSeries(primary: SeriesPoint[], secondary: SeriesPoint[]): CombinedSeriesPoint[] {
@@ -83,13 +96,14 @@ function combineSeries(primary: SeriesPoint[], secondary: SeriesPoint[]): Combin
 }
 
 function buildExerciseDailyProgress(
-  workouts: WorkoutHistoryRow[],
+  workouts: Array<Pick<WorkoutHistoryRow | ExerciseInsightHistoryRow, 'started_at' | 'workout_exercises'>>,
   exerciseName: string,
   range: RangeKey,
+  matchingExerciseNames: string[] = [exerciseName],
 ): DailyProgressEntry[] {
   if (!exerciseName) return []
   const cutoff = getRangeCutoff(range)
-  const targetName = normalizeExerciseName(exerciseName)
+  const targetNames = new Set(matchingExerciseNames.map(normalizeExerciseName))
   const byDate = new Map<string, DailyProgressEntry>()
 
   workouts.forEach((workout) => {
@@ -97,7 +111,7 @@ function buildExerciseDailyProgress(
     if (cutoff !== null && timestamp < cutoff) return
 
     const matching = (workout.workout_exercises ?? []).filter(
-      (exercise) => normalizeExerciseName(exercise.exercise_name) === targetName,
+      (exercise) => targetNames.has(normalizeExerciseName(exercise.exercise_name)),
     )
     const sets = matching.flatMap((exercise) => exercise.workout_sets ?? [])
     if (sets.length === 0) return
@@ -130,6 +144,51 @@ function buildExerciseDailyProgress(
   return [...byDate.values()].sort((a, b) => a.dateKey.localeCompare(b.dateKey))
 }
 
+function buildMatchingExerciseNames(
+  selectedExercise: string,
+  knownExerciseNames: string[],
+  candidateExerciseNames: string[],
+): string[] {
+  const canonicalSelected = resolveCanonicalExerciseName(selectedExercise, knownExerciseNames)
+  const targetName = normalizeExerciseName(canonicalSelected || selectedExercise)
+  const names = new Map<string, string>()
+
+  for (const name of [selectedExercise, canonicalSelected, ...candidateExerciseNames]) {
+    const trimmed = name.trim()
+    if (!trimmed) continue
+
+    const canonical = resolveCanonicalExerciseName(trimmed, knownExerciseNames)
+    if (normalizeExerciseName(canonical || trimmed) === targetName || normalizeExerciseName(trimmed) === targetName) {
+      names.set(normalizeExerciseName(trimmed), trimmed)
+      if (canonical) names.set(normalizeExerciseName(canonical), canonical)
+    }
+  }
+
+  return [...names.values()]
+}
+
+function mapProgressSeriesToDailyProgress(series: ProgressSeriesRow[]): DailyProgressEntry[] {
+  return series
+    .map((point) => {
+      const dateKey = toDateKey(point.bucket_date)
+      return {
+        dateKey,
+        dateLabel: formatDateLabel(dateKey),
+        maxWeight: Number(point.max_weight),
+        totalVolume: Number(point.total_volume),
+        totalReps: Number(point.total_reps),
+      }
+    })
+    .filter((point) => {
+      return (
+        Number.isFinite(point.maxWeight) &&
+        Number.isFinite(point.totalVolume) &&
+        Number.isFinite(point.totalReps)
+      )
+    })
+    .sort((a, b) => a.dateKey.localeCompare(b.dateKey))
+}
+
 function isPermissionDeniedError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
   const maybe = error as { status?: number; code?: string | null }
@@ -148,6 +207,44 @@ function getErrorMessage(error: unknown): string | null {
 function formatBestWeight(value: number | null): string {
   if (value === null) return '-'
   return `${value.toFixed(1)} kg`
+}
+
+async function getExerciseProgressDaily(
+  targetUserId: string,
+  exerciseName: string,
+  range: RangeKey,
+  fallback:
+    | { type: 'full-history' }
+    | { type: 'matching-exercises'; exerciseNames: string[] }
+    | { type: 'none' },
+): Promise<DailyProgressEntry[]> {
+  let rpcProgress: DailyProgressEntry[] = []
+
+  try {
+    const series = await getProgressSeries(targetUserId, exerciseName, getRangeDays(range))
+    rpcProgress = mapProgressSeriesToDailyProgress(series)
+  } catch (error) {
+    if (isPermissionDeniedError(error)) throw error
+  }
+
+  if (fallback.type === 'matching-exercises') {
+    const history = await listExerciseInsightHistory(targetUserId, fallback.exerciseNames)
+    const fallbackProgress = buildExerciseDailyProgress(history, exerciseName, range, fallback.exerciseNames)
+
+    if (fallbackProgress.length > 0) return fallbackProgress
+    return rpcProgress
+  }
+
+  if (rpcProgress.length > 0) return rpcProgress
+
+  if (fallback.type === 'none') return []
+
+  if (fallback.type === 'full-history') {
+    const history = await listWorkoutHistory(targetUserId)
+    return buildExerciseDailyProgress(history, exerciseName, range)
+  }
+
+  return []
 }
 
 function CompareLineChart({
@@ -328,29 +425,17 @@ function CompareLineChart({
   )
 }
 
-export function ProgressTab({ isLoading, workouts, userId, errorMessage }: ProgressTabProps) {
-  const exerciseNames = useMemo(() => {
-    const seen = new Set<string>()
-    const names: string[] = []
-    workouts.forEach((workout) => {
-      ;(workout.workout_exercises ?? []).forEach((exercise) => {
-        const trimmed = exercise.exercise_name.trim()
-        const key = normalizeExerciseName(trimmed)
-        if (trimmed && !seen.has(key)) {
-          seen.add(key)
-          names.push(trimmed)
-        }
-      })
-    })
-    return names.sort((a, b) => a.localeCompare(b))
-  }, [workouts])
-
+export function ProgressTab({
+  exerciseNames,
+  exerciseNamesLoading,
+  exerciseNamesErrorMessage,
+  userId,
+}: ProgressTabProps) {
   const [selectedExercise, setSelectedExercise] = useState('')
   const [range, setRange] = useState<RangeKey>('90d')
   const [mode, setMode] = useState<ModeKey>('mine')
   const [selectedCompareUserId, setSelectedCompareUserId] = useState('')
   const activeExercise = selectedExercise || exerciseNames[0] || ''
-  const mineUnavailable = Boolean(errorMessage)
   const noExerciseData = exerciseNames.length === 0
 
   const profilesQuery = useQuery({
@@ -380,79 +465,129 @@ export function ProgressTab({ isLoading, workouts, userId, errorMessage }: Progr
     compareProfileQuery.isSuccess &&
     compareProfileQuery.data?.is_progress_public === false
 
-  const compareHistoryQuery = useQuery({
-    queryKey: ['compare-workout-history', effectiveCompareUserId],
-    queryFn: () => listWorkoutHistory(effectiveCompareUserId),
+  const compareKnownPublic =
+    mode === 'compare' &&
+    Boolean(effectiveCompareUserId) &&
+    (isCompareOwner || (compareProfileQuery.isSuccess && compareProfileQuery.data?.is_progress_public === true))
+
+  const compareExerciseNamesQuery = useQuery({
+    queryKey: ['logged-exercise-names', effectiveCompareUserId],
+    queryFn: () => listLoggedExerciseNames(effectiveCompareUserId),
+    enabled: compareKnownPublic,
+  })
+
+  const compareMatchingExerciseNames = useMemo(() => {
+    return buildMatchingExerciseNames(
+      activeExercise,
+      [...exerciseNames, ...(compareExerciseNamesQuery.data ?? [])],
+      compareExerciseNamesQuery.data ?? [],
+    )
+  }, [activeExercise, compareExerciseNamesQuery.data, exerciseNames])
+
+  const ownMatchingExerciseNames = useMemo(() => {
+    return buildMatchingExerciseNames(activeExercise, exerciseNames, exerciseNames)
+  }, [activeExercise, exerciseNames])
+
+  const mineProgressQuery = useQuery({
+    queryKey: ['exercise-progress', userId, activeExercise, range, ownMatchingExerciseNames],
+    queryFn: () =>
+      getExerciseProgressDaily(userId, activeExercise, range, {
+        type: 'matching-exercises',
+        exerciseNames: ownMatchingExerciseNames,
+      }),
+    enabled: Boolean(activeExercise) && !noExerciseData,
+  })
+  const mineUnavailable = mineProgressQuery.isError
+
+  const compareProgressQuery = useQuery({
+    queryKey: ['exercise-progress', effectiveCompareUserId, activeExercise, range, compareMatchingExerciseNames],
+    queryFn: () =>
+      getExerciseProgressDaily(effectiveCompareUserId, activeExercise, range, {
+        type: compareKnownPublic ? 'matching-exercises' : 'none',
+        exerciseNames: compareMatchingExerciseNames,
+      }),
     enabled:
       mode === 'compare' &&
       Boolean(effectiveCompareUserId) &&
+      Boolean(activeExercise) &&
       !compareKnownPrivate &&
+      (!compareKnownPublic || !compareExerciseNamesQuery.isLoading) &&
       !mineUnavailable &&
       !noExerciseData,
   })
 
-  const mineExerciseDaily = useMemo(() => {
-    return buildExerciseDailyProgress(workouts, activeExercise, range)
-  }, [activeExercise, range, workouts])
-
-  const compareExerciseDaily = useMemo(
-    () => buildExerciseDailyProgress(compareHistoryQuery.data ?? [], activeExercise, range),
-    [compareHistoryQuery.data, activeExercise, range],
-  )
+  const mineExerciseDaily = mineProgressQuery.data ?? EMPTY_DAILY_PROGRESS
+  const compareExerciseDaily = compareProgressQuery.data ?? EMPTY_DAILY_PROGRESS
 
   const mineDaily = mineExerciseDaily
 
-  const mineMaxWeightSeries: SeriesPoint[] = mineDaily.map((entry) => ({
-    dateKey: entry.dateKey,
-    dateLabel: entry.dateLabel,
-    value: entry.maxWeight,
-  }))
-  const mineVolumeSeries: SeriesPoint[] = mineDaily.map((entry) => ({
-    dateKey: entry.dateKey,
-    dateLabel: entry.dateLabel,
-    value: entry.totalVolume,
-  }))
-  const mineRepsSeries: SeriesPoint[] = mineDaily.map((entry) => ({
-    dateKey: entry.dateKey,
-    dateLabel: entry.dateLabel,
-    value: entry.totalReps,
-  }))
+  const {
+    bestWeightCompare,
+    bestWeightMine,
+    maxWeightPoints,
+    repsPoints,
+    volumePoints,
+  } = useMemo(() => {
+    const mineMaxWeightSeries: SeriesPoint[] = mineDaily.map((entry) => ({
+      dateKey: entry.dateKey,
+      dateLabel: entry.dateLabel,
+      value: entry.maxWeight,
+    }))
+    const mineVolumeSeries: SeriesPoint[] = mineDaily.map((entry) => ({
+      dateKey: entry.dateKey,
+      dateLabel: entry.dateLabel,
+      value: entry.totalVolume,
+    }))
+    const mineRepsSeries: SeriesPoint[] = mineDaily.map((entry) => ({
+      dateKey: entry.dateKey,
+      dateLabel: entry.dateLabel,
+      value: entry.totalReps,
+    }))
 
-  const compareMaxWeightSeries: SeriesPoint[] =
-    mode === 'compare'
-      ? compareExerciseDaily.map((entry) => ({
-          dateKey: entry.dateKey,
-          dateLabel: entry.dateLabel,
-          value: entry.maxWeight,
-        }))
-      : []
-  const compareVolumeSeries: SeriesPoint[] =
-    mode === 'compare'
-      ? compareExerciseDaily.map((entry) => ({
-          dateKey: entry.dateKey,
-          dateLabel: entry.dateLabel,
-          value: entry.totalVolume,
-        }))
-      : []
-  const compareRepsSeries: SeriesPoint[] =
-    mode === 'compare'
-      ? compareExerciseDaily.map((entry) => ({
-          dateKey: entry.dateKey,
-          dateLabel: entry.dateLabel,
-          value: entry.totalReps,
-        }))
-      : []
+    const compareMaxWeightSeries: SeriesPoint[] =
+      mode === 'compare'
+        ? compareExerciseDaily.map((entry) => ({
+            dateKey: entry.dateKey,
+            dateLabel: entry.dateLabel,
+            value: entry.maxWeight,
+          }))
+        : []
+    const compareVolumeSeries: SeriesPoint[] =
+      mode === 'compare'
+        ? compareExerciseDaily.map((entry) => ({
+            dateKey: entry.dateKey,
+            dateLabel: entry.dateLabel,
+            value: entry.totalVolume,
+          }))
+        : []
+    const compareRepsSeries: SeriesPoint[] =
+      mode === 'compare'
+        ? compareExerciseDaily.map((entry) => ({
+            dateKey: entry.dateKey,
+            dateLabel: entry.dateLabel,
+            value: entry.totalReps,
+          }))
+        : []
 
-  const maxWeightPoints = combineSeries(mineMaxWeightSeries, compareMaxWeightSeries)
-  const volumePoints = combineSeries(mineVolumeSeries, compareVolumeSeries)
-  const repsPoints = combineSeries(mineRepsSeries, compareRepsSeries)
+    return {
+      bestWeightMine:
+        mineMaxWeightSeries.length > 0 ? Math.max(...mineMaxWeightSeries.map((p) => p.value)) : null,
+      bestWeightCompare:
+        compareMaxWeightSeries.length > 0
+          ? Math.max(...compareMaxWeightSeries.map((p) => p.value))
+          : null,
+      maxWeightPoints: combineSeries(mineMaxWeightSeries, compareMaxWeightSeries),
+      volumePoints: combineSeries(mineVolumeSeries, compareVolumeSeries),
+      repsPoints: combineSeries(mineRepsSeries, compareRepsSeries),
+    }
+  }, [compareExerciseDaily, mineDaily, mode])
 
-  const bestWeightMine = mineMaxWeightSeries.length > 0 ? Math.max(...mineMaxWeightSeries.map((p) => p.value)) : null
-  const bestWeightCompare = compareMaxWeightSeries.length > 0 ? Math.max(...compareMaxWeightSeries.map((p) => p.value)) : null
-  const compareHasPermissionError = isPermissionDeniedError(compareHistoryQuery.error) || isPermissionDeniedError(compareProfileQuery.error)
+  const compareHasPermissionError = isPermissionDeniedError(compareProgressQuery.error) || isPermissionDeniedError(compareProfileQuery.error)
   const compareStatusMessage = useMemo(() => {
     if (mode !== 'compare') return ''
-    if (mineUnavailable) return errorMessage ?? 'Unable to load your workout history.'
+    if (mineUnavailable) return getErrorMessage(mineProgressQuery.error) ?? 'Unable to load your progress.'
+    if (exerciseNamesLoading) return 'Loading exercises...'
+    if (exerciseNamesErrorMessage) return exerciseNamesErrorMessage
     if (noExerciseData) return 'No completed workout data yet. Finish workouts to compare.'
     if (profilesQuery.isLoading) return 'Loading users to compare...'
     if (profilesQuery.isError) return 'Unable to load users to compare right now.'
@@ -460,12 +595,13 @@ export function ProgressTab({ isLoading, workouts, userId, errorMessage }: Progr
     if (!effectiveCompareUserId) return 'Select a user to compare.'
     if (compareKnownPrivate) return "This user's progress is private."
     if (compareProfileQuery.isLoading) return 'Checking profile visibility...'
-    if (compareHistoryQuery.isLoading) return 'Loading compare data...'
+    if (compareKnownPublic && compareExerciseNamesQuery.isLoading) return 'Loading compare data...'
+    if (compareProgressQuery.isLoading) return 'Loading compare data...'
     if (compareHasPermissionError) return "You do not have permission to view this user's progress."
-    if (compareHistoryQuery.isError) {
-      return getErrorMessage(compareHistoryQuery.error) ?? 'Unable to load compare progress. Try again.'
+    if (compareProgressQuery.isError) {
+      return getErrorMessage(compareProgressQuery.error) ?? 'Unable to load compare progress. Try again.'
     }
-    if ((compareHistoryQuery.data ?? []).length === 0 || compareExerciseDaily.length === 0) {
+    if (compareExerciseDaily.length === 0) {
       if (isCompareOwner) return 'You have no workouts in this range.'
       if (compareProfileQuery.data?.is_progress_public === true) {
         return `${selectedCompareUser?.display_name || 'This user'} has no ${activeExercise} data in this range.`
@@ -482,18 +618,21 @@ export function ProgressTab({ isLoading, workouts, userId, errorMessage }: Progr
     compareKnownPrivate,
     compareProfileQuery.isLoading,
     compareProfileQuery.data,
-    compareHistoryQuery.isLoading,
+    compareKnownPublic,
+    compareExerciseNamesQuery.isLoading,
+    compareProgressQuery.isLoading,
     compareHasPermissionError,
-    compareHistoryQuery.error,
-    compareHistoryQuery.isError,
-    compareHistoryQuery.data,
+    compareProgressQuery.error,
+    compareProgressQuery.isError,
     compareExerciseDaily.length,
     isCompareOwner,
     activeExercise,
     selectedCompareUser?.display_name,
     mineUnavailable,
-    errorMessage,
+    mineProgressQuery.error,
     noExerciseData,
+    exerciseNamesErrorMessage,
+    exerciseNamesLoading,
   ])
 
   return (
@@ -503,12 +642,7 @@ export function ProgressTab({ isLoading, workouts, userId, errorMessage }: Progr
           Progress
         </Typography>
 
-        {isLoading ? (
-          <Box sx={{ display: 'grid', placeItems: 'center', py: 2 }}>
-            <CircularProgress size={26} />
-          </Box>
-        ) : (
-          <>
+        <>
             <Stack direction="row" spacing={0.6}>
               <Button
                 size="small"
@@ -527,7 +661,15 @@ export function ProgressTab({ isLoading, workouts, userId, errorMessage }: Progr
             </Stack>
 
             {mineUnavailable ? (
-              <Typography className="muted">{errorMessage}</Typography>
+              <Typography className="muted">
+                {getErrorMessage(mineProgressQuery.error) ?? 'Unable to load your progress.'}
+              </Typography>
+            ) : exerciseNamesLoading ? (
+              <Box sx={{ display: 'grid', placeItems: 'center', py: 2 }}>
+                <CircularProgress size={26} />
+              </Box>
+            ) : exerciseNamesErrorMessage ? (
+              <Typography className="muted">{exerciseNamesErrorMessage}</Typography>
             ) : noExerciseData ? (
               <Typography className="muted">No completed workout data yet. Finish workouts to see progress.</Typography>
             ) : (
@@ -594,7 +736,15 @@ export function ProgressTab({ isLoading, workouts, userId, errorMessage }: Progr
               </Typography>
             ) : null}
 
-            {!noExerciseData && !mineUnavailable ? (
+            {mineProgressQuery.isLoading ? (
+              <Box sx={{ display: 'grid', placeItems: 'center', py: 2 }}>
+                <CircularProgress size={26} />
+              </Box>
+            ) : mineProgressQuery.isError ? (
+              <Typography variant="body2" className="muted">
+                {getErrorMessage(mineProgressQuery.error) ?? 'Unable to load progress. Try again.'}
+              </Typography>
+            ) : !noExerciseData && !mineUnavailable ? (
               <>
                 <Stack direction="row" spacing={0.7}>
                   <Paper className="card" elevation={0} sx={{ flex: 1, p: 0.7 }}>
@@ -642,8 +792,7 @@ export function ProgressTab({ isLoading, workouts, userId, errorMessage }: Progr
                 />
               </>
             ) : null}
-          </>
-        )}
+        </>
       </Stack>
     </Paper>
   )

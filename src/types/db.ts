@@ -73,6 +73,12 @@ export interface WorkoutHistoryRow {
   workout_exercises: WorkoutHistoryExercise[]
 }
 
+export interface ExerciseInsightHistoryRow {
+  id: string
+  started_at: string
+  workout_exercises: WorkoutHistoryExercise[]
+}
+
 export interface WorkoutSetInput {
   reps: number
   weightKg: number

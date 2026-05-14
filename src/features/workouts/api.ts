@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase'
 import type {
   AggregatedWorkoutProgressRow,
+  ExerciseInsightHistoryRow,
   ExerciseRow,
   WorkoutRow,
   WorkoutSetInput,
@@ -204,10 +205,7 @@ export async function insertWorkoutExercise(
     .select('id,workout_id,exercise_name,position')
     .single()
 
-  if (error) {
-    console.error('insertWorkoutExercise error:', error)
-    throwSupabaseError(error)
-  }
+  if (error) throwSupabaseError(error)
   return data as WorkoutExerciseRow
 }
 
@@ -320,6 +318,45 @@ export async function listWorkoutHistory(userId: string): Promise<WorkoutHistory
     ...workout,
     title: null,
   }))
+}
+
+export async function listLoggedExerciseNames(userId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('workouts')
+    .select('workout_exercises(exercise_name)')
+    .eq('user_id', userId)
+
+  if (error) throwSupabaseError(error)
+
+  const names = new Map<string, string>()
+  for (const workout of data ?? []) {
+    for (const exercise of workout.workout_exercises ?? []) {
+      const name = exercise.exercise_name?.trim()
+      if (!name) continue
+      names.set(name.toLowerCase(), name)
+    }
+  }
+
+  return [...names.values()].sort((a, b) => a.localeCompare(b))
+}
+
+export async function listExerciseInsightHistory(
+  userId: string,
+  exerciseNames: string[],
+): Promise<ExerciseInsightHistoryRow[]> {
+  if (exerciseNames.length === 0) return []
+
+  const { data, error } = await supabase
+    .from('workouts')
+    .select(
+      'id,started_at,workout_exercises!inner(id,exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
+    )
+    .eq('user_id', userId)
+    .in('workout_exercises.exercise_name', exerciseNames)
+    .order('started_at', { ascending: false })
+
+  if (error) throwSupabaseError(error)
+  return (data ?? []) as ExerciseInsightHistoryRow[]
 }
 
 export async function getProgressSeries(
