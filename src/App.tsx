@@ -158,6 +158,12 @@ function App() {
   const [useMonkeyBackground, setUseMonkeyBackground] = useState(() => {
     return localStorage.getItem('useMonkeyBackground') === 'true'
   })
+  const [uploadedBackgroundData, setUploadedBackgroundData] = useState(() => {
+    return localStorage.getItem('uploadedBackgroundData') || ''
+  })
+  const [useUploadedBackground, setUseUploadedBackground] = useState(() => {
+    return localStorage.getItem('useUploadedBackground') === 'true'
+  })
 
   const [snackbar, setSnackbar] = useState<SnackbarState>({
     open: false,
@@ -353,20 +359,82 @@ function App() {
   function handleUseCustomBackgroundChange(enabled: boolean) {
     setUseCustomBackground(enabled)
     localStorage.setItem('useCustomBackground', enabled ? 'true' : 'false')
-    // Disable monkey background if enabling custom
-    if (enabled && useMonkeyBackground) {
-      setUseMonkeyBackground(false)
-      localStorage.setItem('useMonkeyBackground', 'false')
+    // Disable other backgrounds if enabling custom
+    if (enabled) {
+      if (useMonkeyBackground) {
+        setUseMonkeyBackground(false)
+        localStorage.setItem('useMonkeyBackground', 'false')
+      }
+      if (useUploadedBackground) {
+        setUseUploadedBackground(false)
+        localStorage.setItem('useUploadedBackground', 'false')
+      }
     }
   }
 
   function handleUseMonkeyBackgroundChange(enabled: boolean) {
     setUseMonkeyBackground(enabled)
     localStorage.setItem('useMonkeyBackground', enabled ? 'true' : 'false')
-    // Disable custom background if enabling monkey
-    if (enabled && useCustomBackground) {
+    // Disable other backgrounds if enabling monkey
+    if (enabled) {
+      if (useCustomBackground) {
+        setUseCustomBackground(false)
+        localStorage.setItem('useCustomBackground', 'false')
+      }
+      if (useUploadedBackground) {
+        setUseUploadedBackground(false)
+        localStorage.setItem('useUploadedBackground', 'false')
+      }
+    }
+  }
+
+  function handleUploadBackgroundImage(file: File) {
+    if (!file.type.startsWith('image/')) {
+      showError('Please select an image file.')
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const base64 = e.target?.result as string
+      setUploadedBackgroundData(base64)
+      localStorage.setItem('uploadedBackgroundData', base64)
+      setUseUploadedBackground(true)
+      localStorage.setItem('useUploadedBackground', 'true')
+      // Disable other backgrounds
       setUseCustomBackground(false)
       localStorage.setItem('useCustomBackground', 'false')
+      setUseMonkeyBackground(false)
+      localStorage.setItem('useMonkeyBackground', 'false')
+      showSuccess('Image uploaded successfully!')
+    }
+    reader.onerror = () => {
+      showError('Failed to read the image file.')
+    }
+    reader.readAsDataURL(file)
+  }
+
+  function handleClearUploadedBackground() {
+    setUploadedBackgroundData('')
+    setUseUploadedBackground(false)
+    localStorage.removeItem('uploadedBackgroundData')
+    localStorage.setItem('useUploadedBackground', 'false')
+    showSuccess('Uploaded image removed.')
+  }
+
+  function handleUseUploadedBackgroundChange(enabled: boolean) {
+    setUseUploadedBackground(enabled)
+    localStorage.setItem('useUploadedBackground', enabled ? 'true' : 'false')
+    // Disable other backgrounds if enabling uploaded
+    if (enabled) {
+      if (useCustomBackground) {
+        setUseCustomBackground(false)
+        localStorage.setItem('useCustomBackground', 'false')
+      }
+      if (useMonkeyBackground) {
+        setUseMonkeyBackground(false)
+        localStorage.setItem('useMonkeyBackground', 'false')
+      }
     }
   }
 
@@ -803,7 +871,9 @@ function App() {
     <Box 
       className="app-shell"
       sx={{
-        backgroundImage: useMonkeyBackground 
+        backgroundImage: useUploadedBackground && uploadedBackgroundData
+          ? `url('${uploadedBackgroundData}')`
+          : useMonkeyBackground 
           ? `url('https://i.imgur.com/Ub9yNZH.png')`
           : (useCustomBackground && backgroundImageUrl ? `url('${backgroundImageUrl}')` : 'none'),
         backgroundSize: 'auto',
@@ -925,6 +995,8 @@ function App() {
           backgroundImageUrl={backgroundImageUrl}
           useCustomBackground={useCustomBackground}
           useMonkeyBackground={useMonkeyBackground}
+          uploadedBackgroundData={uploadedBackgroundData}
+          useUploadedBackground={useUploadedBackground}
           fieldSx={fieldSx}
           createExercisePending={createExerciseMutation.isPending}
           deleteExercisePending={deleteExerciseMutation.isPending}
@@ -941,6 +1013,9 @@ function App() {
           onBackgroundImageUrlChange={handleBackgroundImageUrlChange}
           onUseCustomBackgroundChange={handleUseCustomBackgroundChange}
           onUseMonkeyBackgroundChange={handleUseMonkeyBackgroundChange}
+          onUploadBackgroundImage={handleUploadBackgroundImage}
+          onUseUploadedBackgroundChange={handleUseUploadedBackgroundChange}
+          onClearUploadedBackground={handleClearUploadedBackground}
           onSaveProfile={saveProfile}
           onRequestSignOut={() => setSignOutConfirmOpen(true)}
         />

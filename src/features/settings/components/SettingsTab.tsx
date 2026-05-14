@@ -14,6 +14,8 @@ type SettingsTabProps = {
   backgroundImageUrl: string
   useCustomBackground: boolean
   useMonkeyBackground: boolean
+  uploadedBackgroundData: string
+  useUploadedBackground: boolean
   fieldSx: object
   createExercisePending: boolean
   deleteExercisePending: boolean
@@ -30,6 +32,9 @@ type SettingsTabProps = {
   onBackgroundImageUrlChange: (url: string) => void
   onUseCustomBackgroundChange: (enabled: boolean) => void
   onUseMonkeyBackgroundChange: (enabled: boolean) => void
+  onUploadBackgroundImage: (file: File) => void
+  onUseUploadedBackgroundChange: (enabled: boolean) => void
+  onClearUploadedBackground: () => void
   onSaveProfile: () => void
   onRequestSignOut: () => void
 }
@@ -45,6 +50,8 @@ export function SettingsTab({
   backgroundImageUrl,
   useCustomBackground,
   useMonkeyBackground,
+  uploadedBackgroundData,
+  useUploadedBackground,
   fieldSx,
   createExercisePending,
   deleteExercisePending,
@@ -61,6 +68,9 @@ export function SettingsTab({
   onBackgroundImageUrlChange,
   onUseCustomBackgroundChange,
   onUseMonkeyBackgroundChange,
+  onUploadBackgroundImage,
+  onUseUploadedBackgroundChange,
+  onClearUploadedBackground,
   onSaveProfile,
   onRequestSignOut,
 }: SettingsTabProps) {
@@ -304,6 +314,69 @@ export function SettingsTab({
                   <Typography variant="caption" className="muted" sx={{ display: 'block', mt: 0.8 }}>
                     ✓ Custom background will be applied
                   </Typography>
+                )}
+              </Paper>
+
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 1.5,
+                  border: '1px solid rgba(173, 142, 255, 0.2)',
+                  background: 'rgba(20, 15, 42, 0.5)',
+                  borderRadius: 1.5,
+                }}
+              >
+                <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: '#b8b0ff' }}>
+                  Upload Image
+                </Typography>
+                {uploadedBackgroundData && (
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={useUploadedBackground}
+                        onChange={(event) => onUseUploadedBackgroundChange(event.target.checked)}
+                      />
+                    }
+                    label="Use uploaded image"
+                    sx={{ m: 0, mb: 1 }}
+                  />
+                )}
+                <Button
+                  variant="outlined"
+                  component="label"
+                  fullWidth
+                  sx={{ mb: uploadedBackgroundData ? 1 : 0 }}
+                >
+                  📁 Choose Image
+                  <input
+                    hidden
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (file) onUploadBackgroundImage(file)
+                    }}
+                  />
+                </Button>
+                {uploadedBackgroundData && (
+                  <>
+                    <Typography variant="caption" className="muted" sx={{ display: 'block', mb: 1 }}>
+                      ✓ Image stored locally (no upload needed)
+                    </Typography>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      fullWidth
+                      onClick={onClearUploadedBackground}
+                      sx={{
+                        color: '#ff6b6b',
+                        borderColor: '#ff6b6b',
+                        '&:hover': { borderColor: '#ff5252', backgroundColor: 'rgba(255, 107, 107, 0.08)' },
+                      }}
+                    >
+                      Clear Uploaded Image
+                    </Button>
+                  </>
                 )}
               </Paper>
             </Stack>
