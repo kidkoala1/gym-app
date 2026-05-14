@@ -35,7 +35,7 @@ export type EditableHistoryExercise = {
   isNew?: boolean
 }
 
-export type SettingsView = 'menu' | 'exercise-list' | 'profile'
+export type SettingsView = 'menu' | 'exercise-list' | 'profile' | 'appearance'
 
 export type ExerciseInsightSet = {
   reps: number

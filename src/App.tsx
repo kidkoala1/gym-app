@@ -149,6 +149,16 @@ function App() {
   const [profileAvatarUrl, setProfileAvatarUrl] = useState('')
   const [isProgressPublic, setIsProgressPublic] = useState(false)
 
+  const [backgroundImageUrl, setBackgroundImageUrl] = useState(() => {
+    return localStorage.getItem('backgroundImageUrl') || ''
+  })
+  const [useCustomBackground, setUseCustomBackground] = useState(() => {
+    return localStorage.getItem('useCustomBackground') === 'true'
+  })
+  const [useMonkeyBackground, setUseMonkeyBackground] = useState(() => {
+    return localStorage.getItem('useMonkeyBackground') === 'true'
+  })
+
   const [snackbar, setSnackbar] = useState<SnackbarState>({
     open: false,
     severity: 'info',
@@ -333,6 +343,31 @@ function App() {
 
   function showSuccess(message: string) {
     setSnackbar({ open: true, severity: 'success', message })
+  }
+
+  function handleBackgroundImageUrlChange(url: string) {
+    setBackgroundImageUrl(url)
+    localStorage.setItem('backgroundImageUrl', url)
+  }
+
+  function handleUseCustomBackgroundChange(enabled: boolean) {
+    setUseCustomBackground(enabled)
+    localStorage.setItem('useCustomBackground', enabled ? 'true' : 'false')
+    // Disable monkey background if enabling custom
+    if (enabled && useMonkeyBackground) {
+      setUseMonkeyBackground(false)
+      localStorage.setItem('useMonkeyBackground', 'false')
+    }
+  }
+
+  function handleUseMonkeyBackgroundChange(enabled: boolean) {
+    setUseMonkeyBackground(enabled)
+    localStorage.setItem('useMonkeyBackground', enabled ? 'true' : 'false')
+    // Disable custom background if enabling monkey
+    if (enabled && useCustomBackground) {
+      setUseCustomBackground(false)
+      localStorage.setItem('useCustomBackground', 'false')
+    }
   }
 
   function buildEditableExercises(workoutId: string): EditableHistoryExercise[] {
@@ -765,7 +800,18 @@ function App() {
   }
 
   return (
-    <Box className="app-shell">
+    <Box 
+      className="app-shell"
+      sx={{
+        backgroundImage: useMonkeyBackground 
+          ? `url('https://i.imgur.com/Ub9yNZH.png')`
+          : (useCustomBackground && backgroundImageUrl ? `url('${backgroundImageUrl}')` : 'none'),
+        backgroundSize: 'auto',
+        backgroundPosition: 'center',
+        backgroundAttachment: 'fixed',
+        backgroundRepeat: 'repeat',
+      }}
+    >
       <Paper className="panel" elevation={0}>
         <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
           <Typography variant="h5" sx={{ fontSize: '1.25rem', fontWeight: 700 }}>
@@ -876,6 +922,9 @@ function App() {
           profileDisplayName={profileDisplayName}
           profileAvatarUrl={profileAvatarUrl}
           isProgressPublic={isProgressPublic}
+          backgroundImageUrl={backgroundImageUrl}
+          useCustomBackground={useCustomBackground}
+          useMonkeyBackground={useMonkeyBackground}
           fieldSx={fieldSx}
           createExercisePending={createExerciseMutation.isPending}
           deleteExercisePending={deleteExerciseMutation.isPending}
@@ -889,6 +938,9 @@ function App() {
           onProfileDisplayNameChange={setProfileDisplayName}
           onProfileAvatarUrlChange={setProfileAvatarUrl}
           onIsProgressPublicChange={setIsProgressPublic}
+          onBackgroundImageUrlChange={handleBackgroundImageUrlChange}
+          onUseCustomBackgroundChange={handleUseCustomBackgroundChange}
+          onUseMonkeyBackgroundChange={handleUseMonkeyBackgroundChange}
           onSaveProfile={saveProfile}
           onRequestSignOut={() => setSignOutConfirmOpen(true)}
         />

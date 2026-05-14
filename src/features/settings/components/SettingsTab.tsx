@@ -11,6 +11,9 @@ type SettingsTabProps = {
   profileDisplayName: string
   profileAvatarUrl: string
   isProgressPublic: boolean
+  backgroundImageUrl: string
+  useCustomBackground: boolean
+  useMonkeyBackground: boolean
   fieldSx: object
   createExercisePending: boolean
   deleteExercisePending: boolean
@@ -24,6 +27,9 @@ type SettingsTabProps = {
   onProfileDisplayNameChange: (value: string) => void
   onProfileAvatarUrlChange: (value: string) => void
   onIsProgressPublicChange: (value: boolean) => void
+  onBackgroundImageUrlChange: (url: string) => void
+  onUseCustomBackgroundChange: (enabled: boolean) => void
+  onUseMonkeyBackgroundChange: (enabled: boolean) => void
   onSaveProfile: () => void
   onRequestSignOut: () => void
 }
@@ -36,6 +42,9 @@ export function SettingsTab({
   profileDisplayName,
   profileAvatarUrl,
   isProgressPublic,
+  backgroundImageUrl,
+  useCustomBackground,
+  useMonkeyBackground,
   fieldSx,
   createExercisePending,
   deleteExercisePending,
@@ -49,6 +58,9 @@ export function SettingsTab({
   onProfileDisplayNameChange,
   onProfileAvatarUrlChange,
   onIsProgressPublicChange,
+  onBackgroundImageUrlChange,
+  onUseCustomBackgroundChange,
+  onUseMonkeyBackgroundChange,
   onSaveProfile,
   onRequestSignOut,
 }: SettingsTabProps) {
@@ -63,6 +75,13 @@ export function SettingsTab({
               sx={{ justifyContent: 'space-between' }}
             >
               Profile
+            </Button>
+            <Button
+              variant="outlined"
+              onClick={() => onSettingsViewChange('appearance')}
+              sx={{ justifyContent: 'space-between' }}
+            >
+              Background
             </Button>
             <Button
               variant="outlined"
@@ -151,7 +170,7 @@ export function SettingsTab({
               </List>
             </Stack>
           </Stack>
-        ) : (
+        ) : settingsView === 'profile' ? (
           <Stack spacing={1.25}>
             <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Typography variant="h6" sx={{ fontSize: '1rem' }}>
@@ -213,6 +232,81 @@ export function SettingsTab({
             <Button variant="contained" onClick={onSaveProfile} disabled={upsertProfilePending}>
               Save profile
             </Button>
+          </Stack>
+        ) : (
+          <Stack spacing={1.25}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Typography variant="h6" sx={{ fontSize: '1rem' }}>
+                Background
+              </Typography>
+              <Button variant="outlined" size="small" onClick={() => onSettingsViewChange('menu')}>
+                Back
+              </Button>
+            </Stack>
+            <Stack spacing={1.5} sx={{ py: 0.5 }}>
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 1.5,
+                  border: '1px solid rgba(173, 142, 255, 0.2)',
+                  background: 'rgba(20, 15, 42, 0.5)',
+                  borderRadius: 1.5,
+                }}
+              >
+                <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: '#b8b0ff' }}>
+                  Quick Preset
+                </Typography>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={useMonkeyBackground}
+                      onChange={(event) => onUseMonkeyBackgroundChange(event.target.checked)}
+                    />
+                  }
+                  label="🐵 Kees modus"
+                  sx={{ m: 0 }}
+                />
+              </Paper>
+
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 1.5,
+                  border: '1px solid rgba(173, 142, 255, 0.2)',
+                  background: 'rgba(20, 15, 42, 0.5)',
+                  borderRadius: 1.5,
+                }}
+              >
+                <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: '#b8b0ff' }}>
+                  Custom Background
+                </Typography>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={useCustomBackground}
+                      onChange={(event) => onUseCustomBackgroundChange(event.target.checked)}
+                    />
+                  }
+                  label="Use custom image"
+                  sx={{ m: 0, mb: 1.2 }}
+                />
+                <TextField
+                  label="Background image URL"
+                  placeholder="https://example.com/image.jpg"
+                  value={backgroundImageUrl}
+                  onChange={(event) => onBackgroundImageUrlChange(event.target.value)}
+                  disabled={!useCustomBackground}
+                  fullWidth
+                  size="small"
+                  sx={fieldSx}
+                />
+                {backgroundImageUrl && useCustomBackground && (
+                  <Typography variant="caption" className="muted" sx={{ display: 'block', mt: 0.8 }}>
+                    ✓ Custom background will be applied
+                  </Typography>
+                )}
+              </Paper>
+            </Stack>
           </Stack>
         )}
 
