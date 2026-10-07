@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useRef, useState } from 'react'
 import { CircularProgress, CssBaseline, Snackbar, ThemeProvider } from '@mui/material'
 import { useQuery } from '@tanstack/react-query'
 import { BottomNav, type TabView } from './components/BottomNav'
@@ -53,6 +53,7 @@ function AppContent({ preferences }: { preferences: ReturnType<typeof usePrefere
   const [activeTab, setActiveTab] = useState<TabView>('workout')
   const [settingsView, setSettingsView] = useState<SettingsView>('menu')
   const [signOutConfirmOpen, setSignOutConfirmOpen] = useState(false)
+  const scrollerRef = useRef<HTMLDivElement>(null)
 
   const background = useBackgroundSettings({ showError, showSuccess })
   const profile = useProfileForm(user, { showError, showSuccess })
@@ -84,10 +85,14 @@ function AppContent({ preferences }: { preferences: ReturnType<typeof usePrefere
     ? getErrorMessage(loggedExerciseNamesQuery.error, 'Could not load logged exercises.')
     : null
 
+  function scrollToTop() {
+    scrollerRef.current?.scrollTo(0, 0)
+  }
+
   function changeTab(tab: TabView) {
     setActiveTab(tab)
     if (tab !== 'settings') setSettingsView('menu')
-    window.scrollTo(0, 0)
+    scrollToTop()
   }
 
   function openPastWorkout(workoutId: string) {
@@ -164,70 +169,74 @@ function AppContent({ preferences }: { preferences: ReturnType<typeof usePrefere
         />
       ) : null}
 
-      <main className="app">
-        <Suspense
-          fallback={
-            <div className="spinner-row">
-              <CircularProgress size={26} aria-label="Loading" />
-            </div>
-          }
-        >
-          {activeTab === 'workout' ? (
-            <WorkoutTab
-              userId={user.id}
-              workout={workout.workout}
-              resumePending={workout.resumePending}
-              syncError={workout.syncError}
-              recentWorkouts={recentWorkouts.data ?? []}
-              exerciseNames={library.exerciseNames}
-              startPending={workout.startWorkoutPending}
-              finishPending={workout.finishWorkoutPending}
-              deletePending={workout.deleteWorkoutPending}
-              onStart={(title) => void workout.startWorkout(title)}
-              onRename={(title) => void workout.renameWorkout(title)}
-              onAddExercise={(name) => void workout.addExercise(name)}
-              onSwapExercise={workout.swapExercise}
-              onRemoveExercise={workout.removeExercise}
-              onUpdateSet={workout.updateSet}
-              onDeleteSet={workout.deleteSet}
-              onSaveNow={workout.saveNow}
-              onFinish={workout.finishWorkout}
-              onDelete={workout.deleteActiveWorkout}
-              onOpenPastWorkout={openPastWorkout}
-            />
-          ) : activeTab === 'progress' ? (
-            <ProgressTab
-              exerciseNames={loggedExerciseNamesQuery.data ?? []}
-              exerciseNamesLoading={loggedExerciseNamesQuery.isLoading}
-              exerciseNamesErrorMessage={loggedExerciseNamesErrorMessage}
-              userId={user.id}
-            />
-          ) : activeTab === 'history' ? (
-            <HistoryTab history={history} exerciseNames={library.exerciseNames} />
-          ) : (
-            <SettingsTab
-              view={settingsView}
-              onViewChange={(view) => {
-                setSettingsView(view)
-                window.scrollTo(0, 0)
-              }}
-              appVersion={__APP_VERSION__}
-              user={user}
-              profile={profile}
-              library={library}
-              background={background}
-              preferences={preferences}
-              onRequestSignOut={() => setSignOutConfirmOpen(true)}
-            />
-          )}
-        </Suspense>
-      </main>
+      <div className="shell">
+        <div className="scroller" ref={scrollerRef}>
+          <main className="app">
+            <Suspense
+              fallback={
+                <div className="spinner-row">
+                  <CircularProgress size={26} aria-label="Loading" />
+                </div>
+              }
+            >
+              {activeTab === 'workout' ? (
+                <WorkoutTab
+                  userId={user.id}
+                  workout={workout.workout}
+                  resumePending={workout.resumePending}
+                  syncError={workout.syncError}
+                  recentWorkouts={recentWorkouts.data ?? []}
+                  exerciseNames={library.exerciseNames}
+                  startPending={workout.startWorkoutPending}
+                  finishPending={workout.finishWorkoutPending}
+                  deletePending={workout.deleteWorkoutPending}
+                  onStart={(title) => void workout.startWorkout(title)}
+                  onRename={(title) => void workout.renameWorkout(title)}
+                  onAddExercise={(name) => void workout.addExercise(name)}
+                  onSwapExercise={workout.swapExercise}
+                  onRemoveExercise={workout.removeExercise}
+                  onUpdateSet={workout.updateSet}
+                  onDeleteSet={workout.deleteSet}
+                  onSaveNow={workout.saveNow}
+                  onFinish={workout.finishWorkout}
+                  onDelete={workout.deleteActiveWorkout}
+                  onOpenPastWorkout={openPastWorkout}
+                />
+              ) : activeTab === 'progress' ? (
+                <ProgressTab
+                  exerciseNames={loggedExerciseNamesQuery.data ?? []}
+                  exerciseNamesLoading={loggedExerciseNamesQuery.isLoading}
+                  exerciseNamesErrorMessage={loggedExerciseNamesErrorMessage}
+                  userId={user.id}
+                />
+              ) : activeTab === 'history' ? (
+                <HistoryTab history={history} exerciseNames={library.exerciseNames} />
+              ) : (
+                <SettingsTab
+                  view={settingsView}
+                  onViewChange={(view) => {
+                    setSettingsView(view)
+                    scrollToTop()
+                  }}
+                  appVersion={__APP_VERSION__}
+                  user={user}
+                  profile={profile}
+                  library={library}
+                  background={background}
+                  preferences={preferences}
+                  onRequestSignOut={() => setSignOutConfirmOpen(true)}
+                />
+              )}
+            </Suspense>
+          </main>
+        </div>
 
-      {preferences.restClockEnabled && workout.workout && workout.restSince ? (
-        <RestClock since={workout.restSince} onDismiss={workout.dismissRestClock} />
-      ) : null}
+        {preferences.restClockEnabled && workout.workout && workout.restSince ? (
+          <RestClock since={workout.restSince} onDismiss={workout.dismissRestClock} />
+        ) : null}
 
-      <BottomNav value={activeTab} onChange={changeTab} workoutInProgress={workout.workout !== null} />
+        <BottomNav value={activeTab} onChange={changeTab} workoutInProgress={workout.workout !== null} />
+      </div>
 
       <ConfirmDialog
         open={signOutConfirmOpen}
