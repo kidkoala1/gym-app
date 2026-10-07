@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
   Alert,
   Box,
@@ -33,6 +33,7 @@ import {
   deleteWorkout,
   deleteWorkoutExercise,
   finishWorkout as finishWorkoutApi,
+  getUnfinishedWorkout,
   insertWorkoutExercise,
   insertWorkoutSets,
   listExerciseInsightHistory,
@@ -94,9 +95,55 @@ function parseLocalizedDecimal(value: string): number {
   return Number(value.trim().replace(',', '.'))
 }
 
+const MAX_TITLE_LENGTH = 100
+const MAX_DISPLAY_NAME_LENGTH = 50
+const MAX_REPS = 1000
+const MAX_WEIGHT_KG = 2000
+const MAX_BACKGROUND_UPLOAD_BYTES = 2 * 1024 * 1024
+
 function normalizeWorkoutTitle(value: string): string | null {
-  const trimmed = value.trim()
+  const trimmed = value.trim().slice(0, MAX_TITLE_LENGTH)
   return trimmed ? trimmed : null
+}
+
+function isValidSetValues(reps: number, weightKg: number): boolean {
+  return (
+    Number.isFinite(reps) &&
+    Number.isFinite(weightKg) &&
+    reps > 0 &&
+    reps <= MAX_REPS &&
+    weightKg >= 0 &&
+    weightKg <= MAX_WEIGHT_KG
+  )
+}
+
+function readLocal(key: string): string {
+  try {
+    return localStorage.getItem(key) || ''
+  } catch {
+    return ''
+  }
+}
+
+function storeLocal(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function toCssUrl(value: string): string {
+  if (/^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+$/i.test(value)) return `url("${value}")`
+
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return 'none'
+    return `url("${encodeURI(url.href).replace(/["'()\\]/g, (char) => `%${char.charCodeAt(0).toString(16)}`)}")`
+  } catch {
+    return 'none'
+  }
 }
 
 const RECENT_BEST_WINDOW_DAYS = 60
@@ -204,19 +251,19 @@ function App() {
   const [isProgressPublic, setIsProgressPublic] = useState(false)
 
   const [backgroundImageUrl, setBackgroundImageUrl] = useState(() => {
-    return localStorage.getItem('backgroundImageUrl') || ''
+    return readLocal('backgroundImageUrl')
   })
   const [useCustomBackground, setUseCustomBackground] = useState(() => {
-    return localStorage.getItem('useCustomBackground') === 'true'
+    return readLocal('useCustomBackground') === 'true'
   })
   const [useMonkeyBackground, setUseMonkeyBackground] = useState(() => {
-    return localStorage.getItem('useMonkeyBackground') === 'true'
+    return readLocal('useMonkeyBackground') === 'true'
   })
   const [uploadedBackgroundData, setUploadedBackgroundData] = useState(() => {
-    return localStorage.getItem('uploadedBackgroundData') || ''
+    return readLocal('uploadedBackgroundData')
   })
   const [useUploadedBackground, setUseUploadedBackground] = useState(() => {
-    return localStorage.getItem('useUploadedBackground') === 'true'
+    return readLocal('useUploadedBackground') === 'true'
   })
 
   const [snackbar, setSnackbar] = useState<SnackbarState>({
@@ -328,6 +375,35 @@ function App() {
     setIsProgressPublic(Boolean(profileQuery.data?.is_progress_public))
   }, [profileQuery.data, user?.id, user?.user_metadata])
 
+  // Resume a workout that was started but never finished (e.g. the app was closed mid-session).
+  const resumeCheckedForUserRef = useRef<string | null>(null)
+  useEffect(() => {
+    const userId = user?.id
+    if (!userId || resumeCheckedForUserRef.current === userId) return
+    resumeCheckedForUserRef.current = userId
+
+    getUnfinishedWorkout(userId)
+      .then((workout) => {
+        if (!workout) return
+        const exercises = [...workout.workout_exercises]
+          .sort((a, b) => a.position - b.position)
+          .map((exercise) => ({
+            name: exercise.exercise_name,
+            sets: [...exercise.workout_sets]
+              .sort((a, b) => a.set_number - b.set_number)
+              .map((set) => ({ reps: Number(set.reps), weightKg: Number(set.weight_kg) })),
+          }))
+
+        setActiveWorkout(
+          (prev) => prev ?? { id: workout.id, startedAt: workout.started_at, title: workout.title, exercises },
+        )
+        setWorkoutTitleInput((prev) => prev || workout.title || '')
+      })
+      .catch(() => {
+        resumeCheckedForUserRef.current = null
+      })
+  }, [user?.id])
+
   useEffect(() => {
     if (activeTab !== 'settings') {
       setSettingsView('menu')
@@ -417,37 +493,37 @@ function App() {
 
   function handleBackgroundImageUrlChange(url: string) {
     setBackgroundImageUrl(url)
-    localStorage.setItem('backgroundImageUrl', url)
+    storeLocal('backgroundImageUrl', url)
   }
 
   function handleUseCustomBackgroundChange(enabled: boolean) {
     setUseCustomBackground(enabled)
-    localStorage.setItem('useCustomBackground', enabled ? 'true' : 'false')
+    storeLocal('useCustomBackground', enabled ? 'true' : 'false')
     // Disable other backgrounds if enabling custom
     if (enabled) {
       if (useMonkeyBackground) {
         setUseMonkeyBackground(false)
-        localStorage.setItem('useMonkeyBackground', 'false')
+        storeLocal('useMonkeyBackground', 'false')
       }
       if (useUploadedBackground) {
         setUseUploadedBackground(false)
-        localStorage.setItem('useUploadedBackground', 'false')
+        storeLocal('useUploadedBackground', 'false')
       }
     }
   }
 
   function handleUseMonkeyBackgroundChange(enabled: boolean) {
     setUseMonkeyBackground(enabled)
-    localStorage.setItem('useMonkeyBackground', enabled ? 'true' : 'false')
+    storeLocal('useMonkeyBackground', enabled ? 'true' : 'false')
     // Disable other backgrounds if enabling monkey
     if (enabled) {
       if (useCustomBackground) {
         setUseCustomBackground(false)
-        localStorage.setItem('useCustomBackground', 'false')
+        storeLocal('useCustomBackground', 'false')
       }
       if (useUploadedBackground) {
         setUseUploadedBackground(false)
-        localStorage.setItem('useUploadedBackground', 'false')
+        storeLocal('useUploadedBackground', 'false')
       }
     }
   }
@@ -457,19 +533,26 @@ function App() {
       showError('Please select an image file.')
       return
     }
+    if (file.size > MAX_BACKGROUND_UPLOAD_BYTES) {
+      showError('Image is too large. Please choose one under 2 MB.')
+      return
+    }
 
     const reader = new FileReader()
     reader.onload = (e) => {
       const base64 = e.target?.result as string
+      if (!storeLocal('uploadedBackgroundData', base64)) {
+        showError('Could not store the image on this device (storage full or unavailable).')
+        return
+      }
       setUploadedBackgroundData(base64)
-      localStorage.setItem('uploadedBackgroundData', base64)
       setUseUploadedBackground(true)
-      localStorage.setItem('useUploadedBackground', 'true')
+      storeLocal('useUploadedBackground', 'true')
       // Disable other backgrounds
       setUseCustomBackground(false)
-      localStorage.setItem('useCustomBackground', 'false')
+      storeLocal('useCustomBackground', 'false')
       setUseMonkeyBackground(false)
-      localStorage.setItem('useMonkeyBackground', 'false')
+      storeLocal('useMonkeyBackground', 'false')
       showSuccess('Image uploaded successfully!')
     }
     reader.onerror = () => {
@@ -481,23 +564,27 @@ function App() {
   function handleClearUploadedBackground() {
     setUploadedBackgroundData('')
     setUseUploadedBackground(false)
-    localStorage.removeItem('uploadedBackgroundData')
-    localStorage.setItem('useUploadedBackground', 'false')
+    try {
+      localStorage.removeItem('uploadedBackgroundData')
+    } catch {
+      // storage unavailable; state is already cleared
+    }
+    storeLocal('useUploadedBackground', 'false')
     showSuccess('Uploaded image removed.')
   }
 
   function handleUseUploadedBackgroundChange(enabled: boolean) {
     setUseUploadedBackground(enabled)
-    localStorage.setItem('useUploadedBackground', enabled ? 'true' : 'false')
+    storeLocal('useUploadedBackground', enabled ? 'true' : 'false')
     // Disable other backgrounds if enabling uploaded
     if (enabled) {
       if (useCustomBackground) {
         setUseCustomBackground(false)
-        localStorage.setItem('useCustomBackground', 'false')
+        storeLocal('useCustomBackground', 'false')
       }
       if (useMonkeyBackground) {
         setUseMonkeyBackground(false)
-        localStorage.setItem('useMonkeyBackground', 'false')
+        storeLocal('useMonkeyBackground', 'false')
       }
     }
   }
@@ -635,8 +722,7 @@ function App() {
         reps: String(set.reps),
         weight_kg: String(set.weight),
       }))
-      .filter((set) => Number.isFinite(Number(set.reps)) && Number.isFinite(parseLocalizedDecimal(set.weight_kg)))
-      .filter((set) => Number(set.reps) > 0 && parseLocalizedDecimal(set.weight_kg) >= 0)
+      .filter((set) => isValidSetValues(Number(set.reps), parseLocalizedDecimal(set.weight_kg)))
 
     if (completedSets.length === 0) return
 
@@ -672,7 +758,13 @@ function App() {
         throw new Error('Authentication session expired. Please refresh and try again.')
       }
 
-      for (const [index, exercise] of draft.entries()) {
+      const existingPositions =
+        historyWorkoutsQuery.data
+          ?.find((item) => item.id === workoutId)
+          ?.workout_exercises.map((exercise) => exercise.position) ?? []
+      let nextPosition = Math.max(0, ...existingPositions) + 1
+
+      for (const exercise of draft) {
         if (exercise.deleted) {
           await deleteWorkoutExercise(exercise.id)
           continue
@@ -682,20 +774,24 @@ function App() {
         if (!cleanedName) throw new Error('Exercise title cannot be empty.')
 
         if (exercise.isNew) {
-          // New exercise - insert it (use index + 1 for position)
-          const position = index + 1
-          const workoutExercise = await insertWorkoutExercise(workoutId, cleanedName, position)
-
+          // New exercise - append after the highest existing position (positions can have gaps)
           const completedSets: WorkoutSetInput[] = exercise.sets
-            .filter((set) => Number.isFinite(Number(set.reps)) && Number.isFinite(parseLocalizedDecimal(set.weight_kg)))
-            .filter((set) => Number(set.reps) > 0 && parseLocalizedDecimal(set.weight_kg) >= 0)
+            .filter((set) => isValidSetValues(Number(set.reps), parseLocalizedDecimal(set.weight_kg)))
             .map((set) => ({
               reps: Number(set.reps),
               weightKg: parseLocalizedDecimal(set.weight_kg),
             }))
 
+          const workoutExercise = await insertWorkoutExercise(workoutId, cleanedName, nextPosition)
+          nextPosition += 1
+
           if (completedSets.length > 0) {
-            await insertWorkoutSets(workoutExercise.id, completedSets)
+            try {
+              await insertWorkoutSets(workoutExercise.id, completedSets)
+            } catch (error) {
+              await deleteWorkoutExercise(workoutExercise.id).catch(() => undefined)
+              throw error
+            }
           }
 
           if (!exerciseNames.some((name) => name.toLowerCase() === cleanedName.toLowerCase())) {
@@ -714,8 +810,12 @@ function App() {
             const reps = Number(set.reps)
             const weight = parseLocalizedDecimal(set.weight_kg)
 
-            if (!Number.isFinite(reps) || reps <= 0) throw new Error('Reps must be greater than 0.')
-            if (!Number.isFinite(weight) || weight < 0) throw new Error('Weight must be 0 or greater.')
+            if (!Number.isFinite(reps) || reps <= 0 || reps > MAX_REPS) {
+              throw new Error(`Reps must be between 1 and ${MAX_REPS}.`)
+            }
+            if (!Number.isFinite(weight) || weight < 0 || weight > MAX_WEIGHT_KG) {
+              throw new Error(`Weight must be between 0 and ${MAX_WEIGHT_KG} kg.`)
+            }
 
             await updateWorkoutSet(set.id, reps, weight)
           }
@@ -755,6 +855,7 @@ function App() {
       return
     }
 
+    resumeCheckedForUserRef.current = null
     setActiveWorkout(null)
     setIsAddingExercise(false)
     setExerciseNameInput('')
@@ -772,6 +873,15 @@ function App() {
   }
 
   async function saveProfile() {
+    if (profileDisplayName.trim().length > MAX_DISPLAY_NAME_LENGTH) {
+      showError(`Display name must be at most ${MAX_DISPLAY_NAME_LENGTH} characters.`)
+      return
+    }
+    if (profileAvatarUrl.trim() && !/^https:\/\//i.test(profileAvatarUrl.trim())) {
+      showError('Profile picture URL must start with https://')
+      return
+    }
+
     try {
       await upsertProfileMutation.mutateAsync({
         displayName: profileDisplayName,
@@ -866,15 +976,20 @@ function App() {
     const completedSets = setDrafts
       .filter((set) => set.reps.trim() !== '' && set.weight.trim() !== '')
       .map((set) => ({ reps: Number(set.reps), weightKg: parseLocalizedDecimal(set.weight) }))
-      .filter((set) => Number.isFinite(set.reps) && Number.isFinite(set.weightKg))
-      .filter((set) => set.reps > 0 && set.weightKg >= 0)
+      .filter((set) => isValidSetValues(set.reps, set.weightKg))
 
     if (completedSets.length === 0) return
 
     try {
       const position = activeWorkout.exercises.length + 1
       const workoutExercise = await insertWorkoutExercise(activeWorkout.id, cleanedName, position)
-      await insertWorkoutSets(workoutExercise.id, completedSets)
+      try {
+        await insertWorkoutSets(workoutExercise.id, completedSets)
+      } catch (error) {
+        // Don't leave an exercise row without sets: it would block retrying at the same position.
+        await deleteWorkoutExercise(workoutExercise.id).catch(() => undefined)
+        throw error
+      }
 
       setActiveWorkout((prev) =>
         prev
@@ -942,10 +1057,10 @@ function App() {
       className="app-shell"
       sx={{
         backgroundImage: useUploadedBackground && uploadedBackgroundData
-          ? `url('${uploadedBackgroundData}')`
-          : useMonkeyBackground 
+          ? toCssUrl(uploadedBackgroundData)
+          : useMonkeyBackground
           ? `url('https://i.imgur.com/Ub9yNZH.png')`
-          : (useCustomBackground && backgroundImageUrl ? `url('${backgroundImageUrl}')` : 'none'),
+          : (useCustomBackground && backgroundImageUrl ? toCssUrl(backgroundImageUrl) : 'none'),
         backgroundSize: 'auto',
         backgroundPosition: 'center',
         backgroundAttachment: 'fixed',

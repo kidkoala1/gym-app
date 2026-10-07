@@ -1,6 +1,5 @@
 import { supabase } from '../../lib/supabase'
 import type {
-  AggregatedWorkoutProgressRow,
   ExerciseInsightHistoryRow,
   ExerciseRow,
   WorkoutRow,
@@ -30,9 +29,7 @@ function isMissingColumnError(error: SupabaseErrorLike, table: string, column: s
     (mentionsColumn && message.includes('schema cache')) ||
     (mentionsColumn && mentionsTable && message.includes('schema cache')) ||
     (mentionsColumn && message.includes('could not find')) ||
-    (mentionsColumn && message.includes('does not exist')) ||
-    (mentionsColumn && message.includes('column')) ||
-    (mentionsColumn && message.includes('select'))
+    (mentionsColumn && message.includes('does not exist'))
   )
 }
 
@@ -41,61 +38,6 @@ function throwSupabaseError(error: { message: string; code?: string | null }) {
   enriched.code = error.code
   throw enriched
 }
-
-function createSupabaseQueryError(
-  error: SupabaseErrorLike,
-  status?: number,
-): Error & { code?: string | null; status?: number } {
-  const enriched = new Error(error.message) as Error & { code?: string | null; status?: number }
-  enriched.code = error.code
-  enriched.status = status
-  return enriched
-}
-
-function canFallbackToTableAggregation(error: SupabaseErrorLike): boolean {
-  const code = (error.code ?? '').toUpperCase()
-  const message = error.message.toLowerCase()
-
-  if (code === 'PGRST106' || code === '42P01') return true
-  if (message.includes('schema must be one of')) return true
-  if (message.includes('not in the schema cache')) return true
-  if (message.includes('permission denied for schema progress')) return true
-  if (message.includes('aggregated_workout_progress') && message.includes('does not exist')) return true
-  return false
-}
-
-function aggregateHistoryRows(
-  targetUserId: string,
-  history: WorkoutHistoryRow[],
-  rangeDays: number | null,
-): AggregatedWorkoutProgressRow[] {
-  const cutoff = rangeDays !== null ? Date.now() - rangeDays * 24 * 60 * 60 * 1000 : null
-
-  const rows = history
-    .filter((workout) => {
-      if (cutoff === null) return true
-      return new Date(workout.started_at).getTime() >= cutoff
-    })
-    .map((workout) => {
-      const sets = (workout.workout_exercises ?? []).flatMap((exercise) => exercise.workout_sets ?? [])
-      if (sets.length === 0) return null
-
-      return {
-        user_id: targetUserId,
-        workout_id: workout.id,
-        workout_date: workout.started_at,
-        exercise_count: sets.length,
-        total_reps: sets.reduce((sum, set) => sum + Number(set.reps), 0),
-        total_volume: sets.reduce((sum, set) => sum + Number(set.reps) * Number(set.weight_kg), 0),
-        max_weight: Math.max(...sets.map((set) => Number(set.weight_kg))),
-      }
-    })
-    .filter((entry): entry is AggregatedWorkoutProgressRow => Boolean(entry))
-    .sort((a, b) => a.workout_date.localeCompare(b.workout_date))
-
-  return rows
-}
-
 export async function listExercises(userId: string): Promise<ExerciseRow[]> {
   const { data, error } = await supabase
     .from('exercises')
@@ -381,32 +323,28 @@ export async function searchPublicProfiles(query: string): Promise<PublicProfile
   return (data ?? []) as PublicProfileRow[]
 }
 
-export async function listAggregatedWorkoutProgress(
-  targetUserId: string,
-  rangeDays: number | null,
-): Promise<AggregatedWorkoutProgressRow[]> {
-  let query = supabase
-    .schema('progress')
-    .from('aggregated_workout_progress')
-    .select('user_id,workout_id,workout_date,exercise_count,total_reps,total_volume,max_weight')
-    .eq('user_id', targetUserId)
-    .order('workout_date', { ascending: true })
+export type UnfinishedWorkout = {
+  id: string
+  started_at: string
+  title: string | null
+  workout_exercises: Array<{
+    id: string
+    exercise_name: string
+    position: number
+    workout_sets: Array<{ set_number: number; reps: number; weight_kg: number }>
+  }>
+}
 
-  if (rangeDays !== null) {
-    const cutoff = new Date(Date.now() - rangeDays * 24 * 60 * 60 * 1000).toISOString()
-    query = query.gte('workout_date', cutoff)
-  }
+export async function getUnfinishedWorkout(userId: string): Promise<UnfinishedWorkout | null> {
+  const { data, error } = await supabase
+    .from('workouts')
+    .select('id,started_at,title,workout_exercises(id,exercise_name,position,workout_sets(set_number,reps,weight_kg))')
+    .eq('user_id', userId)
+    .is('finished_at', null)
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
 
-  const { data, error, status } = await query
-
-  if (error) {
-    if (canFallbackToTableAggregation(error)) {
-      const history = await listWorkoutHistory(targetUserId)
-      return aggregateHistoryRows(targetUserId, history, rangeDays)
-    }
-
-    throw createSupabaseQueryError(error, status)
-  }
-
-  return (data ?? []) as AggregatedWorkoutProgressRow[]
+  if (error) throwSupabaseError(error)
+  return (data as UnfinishedWorkout | null) ?? null
 }

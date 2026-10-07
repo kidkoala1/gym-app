@@ -219,12 +219,14 @@ async function getExerciseProgressDaily(
     | { type: 'none' },
 ): Promise<DailyProgressEntry[]> {
   let rpcProgress: DailyProgressEntry[] = []
+  let rpcError: unknown = null
 
   try {
     const series = await getProgressSeries(targetUserId, exerciseName, getRangeDays(range))
     rpcProgress = mapProgressSeriesToDailyProgress(series)
   } catch (error) {
     if (isPermissionDeniedError(error)) throw error
+    rpcError = error
   }
 
   if (fallback.type === 'matching-exercises') {
@@ -232,12 +234,16 @@ async function getExerciseProgressDaily(
     const fallbackProgress = buildExerciseDailyProgress(history, exerciseName, range, fallback.exerciseNames)
 
     if (fallbackProgress.length > 0) return fallbackProgress
+    if (rpcProgress.length === 0 && rpcError) throw rpcError
     return rpcProgress
   }
 
   if (rpcProgress.length > 0) return rpcProgress
 
-  if (fallback.type === 'none') return []
+  if (fallback.type === 'none') {
+    if (rpcError) throw rpcError
+    return []
+  }
 
   if (fallback.type === 'full-history') {
     const history = await listWorkoutHistory(targetUserId)
