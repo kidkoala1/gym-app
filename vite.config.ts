@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
@@ -12,6 +13,11 @@ const appVersion = packageJson.version ?? '0.0.0'
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
+  },
+  test: {
+    // Tests cover plain TypeScript modules; no browser or DOM is needed.
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
   },
   build: {
     rollupOptions: {

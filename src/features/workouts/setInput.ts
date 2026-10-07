@@ -20,7 +20,7 @@ export function normalizeWorkoutTitle(value: string): string | null {
 
 export function isValidSetValues(reps: number, weightKg: number): boolean {
   return (
-    Number.isFinite(reps) &&
+    Number.isInteger(reps) &&
     Number.isFinite(weightKg) &&
     reps > 0 &&
     reps <= MAX_REPS &&

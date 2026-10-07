@@ -278,8 +278,8 @@ export function useWorkoutHistory({
               const reps = Number(set.reps)
               const weight = parseLocalizedDecimal(set.weight_kg)
 
-              if (!Number.isFinite(reps) || reps <= 0 || reps > MAX_REPS) {
-                throw new Error(`Reps must be between 1 and ${MAX_REPS}.`)
+              if (!Number.isInteger(reps) || reps <= 0 || reps > MAX_REPS) {
+                throw new Error(`Reps must be a whole number between 1 and ${MAX_REPS}.`)
               }
               if (!Number.isFinite(weight) || weight < 0 || weight > MAX_WEIGHT_KG) {
                 throw new Error(`Weight must be between 0 and ${MAX_WEIGHT_KG} kg.`)

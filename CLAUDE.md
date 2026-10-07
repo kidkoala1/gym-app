@@ -7,11 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run dev` — Vite dev server
 - `npm run build` — `tsc -b && vite build` (type-check is part of the build)
 - `npm run lint` — ESLint
+- `npm test` — Vitest (unit tests for the pure modules: `*.test.ts` next to the code in `src/`); run one file with `npx vitest run src/lib/css.test.ts`
 - `npm run preview` — serve the production build
 
-There is no test suite. Requires `.env` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (read in [src/lib/supabase.ts](src/lib/supabase.ts)).
+Tests cover the plain TypeScript modules only (no component or database tests). Requires `.env` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (read in [src/lib/supabase.ts](src/lib/supabase.ts)).
 
-GitHub Actions (`.github/workflows/ci.yml`) runs `npm ci`, build, lint and a production `npm audit` on every push to `main` and on pull requests; check the Actions tab if a push shows a red cross.
+GitHub Actions (`.github/workflows/ci.yml`) runs `npm ci`, build, lint, tests and a production `npm audit` on every push to `main` and on pull requests; check the Actions tab if a push shows a red cross.
 
 Bump the `version` in `package.json` (and `package-lock.json`) with each batch of changes; it is shown in Settings via `__APP_VERSION__`.
 
