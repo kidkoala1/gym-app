@@ -1,12 +1,21 @@
-/* iOS-style building blocks: one phone-width column of inset-grouped surfaces on black, a blurred
-   tab bar at thumb height, and sheets that slide up from the bottom. Colours come from index.css. */
+/* iOS-style building blocks: one phone-width column of inset-grouped surfaces on black, a tab bar
+   at thumb height, and sheets that slide up from the bottom. Colours come from index.css. */
 
-/* The page itself never scrolls: a fixed full-screen frame holds a scroll area and the tab bar
-   underneath it. On iOS home-screen apps a bottom bar fixed over a scrolling page gets misplaced
-   (it jumps up, leaving a black strip below) whenever the page height changes, e.g. on a tab switch. */
-.shell {
+/* The page itself never scrolls: a full-screen frame holds a scroll area and the tab bar underneath
+   it. On iOS home-screen apps a bottom bar fixed over a scrolling page gets misplaced whenever the
+   page height changes. Full-screen frames are pinned to the top with an explicit height
+   (--app-height, see index.css) rather than inset: 0, which stops above the home-indicator strip. */
+.shell,
+.center-screen,
+.auth {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--app-height);
+}
+
+.shell {
   display: flex;
   flex-direction: column;
 }
@@ -27,8 +36,6 @@
 }
 
 .center-screen {
-  position: fixed;
-  inset: 0;
   display: grid;
   place-items: center;
 }
@@ -195,7 +202,7 @@ label.row { cursor: pointer; }
 .rest .r-btn svg { width: 18px; height: 18px; }
 
 /* ---------- tab bar ---------- */
-.tabbar { position: relative; flex: none; z-index: 15; background: var(--bar); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); border-top: 0.5px solid var(--sep); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.tabbar { position: relative; flex: none; z-index: 15; background: var(--bar); border-top: 0.5px solid var(--sep); padding-bottom: env(safe-area-inset-bottom, 0px); }
 .tabbar-inner { max-width: 460px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); height: var(--tabbar-h); }
 .tab { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--gray); font-size: 10.5px; font-weight: 500; }
 .tab svg { width: 26px; height: 26px; }
@@ -319,7 +326,7 @@ label.row { cursor: pointer; }
 .bg-layer { position: fixed; inset: 0; z-index: -1; background-position: center; pointer-events: none; }
 .bg-layer::after { content: ''; position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); }
 
-.auth { position: fixed; inset: 0; overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between; padding: calc(env(safe-area-inset-top, 0px) + 72px) 24px calc(env(safe-area-inset-bottom, 0px) + 28px); }
+.auth { overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between; padding: calc(env(safe-area-inset-top, 0px) + 72px) 24px calc(env(safe-area-inset-bottom, 0px) + 28px); }
 .auth-inner { width: 100%; max-width: 420px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
 .app-icon { width: 88px; height: 88px; border-radius: 22px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
 .app-icon svg { width: 54px; height: 54px; }

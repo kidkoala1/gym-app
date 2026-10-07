@@ -5,7 +5,8 @@
   --surface: #1c1c1e;
   --surface-2: #2c2c2e;
   --surface-3: #3a3a3c;
-  --bar: rgba(22, 22, 24, 0.84);
+  /* Solid: content no longer scrolls under the tab bar, and the root background uses it too. */
+  --bar: #121214;
   --fill: rgba(118, 118, 128, 0.24);
   --fill-strong: rgba(120, 120, 128, 0.36);
   --seg-on: #636366;
@@ -49,13 +50,33 @@
   box-sizing: border-box;
 }
 
-/* The document never scrolls; App.css's .scroller does (see .shell there). */
+/* The document never scrolls; App.css's .scroller does (see .shell there).
+   --app-height is the full screen. In iOS home-screen apps, 100% (and inset: 0, dvh) stops above
+   the home-indicator strip and leaves it as a bare strip of root background; 100vh includes it.
+   In a normal browser tab 100vh can run under the browser's toolbar, so it is only used standalone. */
+:root {
+  --app-height: 100%;
+}
+@media (display-mode: standalone) {
+  :root {
+    --app-height: 100vh;
+  }
+}
+
 html,
 body,
 #root {
   margin: 0;
-  height: 100%;
+  height: var(--app-height);
   overflow: hidden;
+}
+
+/* Anything iOS paints outside the page (the home-indicator strip) gets the tab bar's colour. */
+html {
+  background: var(--bar);
+}
+
+body {
   background: var(--bg);
 }
 
