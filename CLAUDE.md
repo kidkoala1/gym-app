@@ -35,7 +35,7 @@ Single-page PWA gym tracker: React 19 + TypeScript + Vite, MUI (dark theme defin
 
 ### Things to know
 
-- **Apply migrations before deploying frontend code that depends on them.** [src/features/workouts/api.ts](src/features/workouts/api.ts) still has a `workouts.title` retry path for a DB without that column; newer columns (e.g. `canonical_exercise_name`) have no such fallback.
+- **Apply migrations before deploying frontend code that depends on them.** [src/features/workouts/api.ts](src/features/workouts/api.ts) assumes the live schema is current (e.g. `workouts.title`, `canonical_exercise_name`) and has no missing-column fallbacks.
 - **Exercise names:** `exercise_name` is the display name; `canonical_exercise_name` (set by a DB trigger from `private.exercise_aliases`, never by the client) is what progress, compare and weight suggestions group on. `resolveCanonicalExerciseName` in [src/features/workouts/defaultExercises.ts](src/features/workouts/defaultExercises.ts) is only typing UX. Merge/split names with `select private.set_exercise_alias('alias', 'Canonical Name');`. See [docs/technical-debt.md](docs/technical-debt.md) for open items.
 - **Writing exercises and sets:** adding an exercise to a workout (live or from History) and saving a whole history edit both go through the `save_workout_edit` RPC (`saveWorkoutEdit` in `api.ts`): one transaction, positions and set numbers assigned by the database, runs as the caller so RLS applies. Don't reintroduce per-row inserts/updates from the client.
 - **Workouts are often never "finished"** (the user forgets the Finish button), so never filter data on `finished_at`; `get_progress_series` and `list_logged_exercise_names` count every workout with sets.

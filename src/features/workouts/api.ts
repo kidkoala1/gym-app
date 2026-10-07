@@ -8,27 +8,6 @@ import type {
   PublicProfileRow,
 } from '../../types/db'
 
-type SupabaseErrorLike = {
-  message: string
-  code?: string | null
-}
-
-function isMissingColumnError(error: SupabaseErrorLike, table: string, column: string): boolean {
-  const code = (error.code ?? '').toUpperCase()
-  const message = error.message.toLowerCase()
-  const mentionsTable = message.includes(table) || message.includes(`'${table}'`)
-  const mentionsColumn = message.includes(column) || message.includes(`'${column}'`)
-
-  return (
-    code === 'PGRST204' ||
-    code === '42703' ||
-    (mentionsColumn && message.includes('schema cache')) ||
-    (mentionsColumn && mentionsTable && message.includes('schema cache')) ||
-    (mentionsColumn && message.includes('could not find')) ||
-    (mentionsColumn && message.includes('does not exist'))
-  )
-}
-
 function throwSupabaseError(error: { message: string; code?: string | null }) {
   const enriched = new Error(error.message) as Error & { code?: string | null }
   enriched.code = error.code
@@ -85,17 +64,8 @@ export async function createWorkout(userId: string, startedAt: string, title?: s
     .select('id,user_id,started_at,finished_at,title,created_at')
     .single()
 
-  if (!error) return data as WorkoutRow
-  if (!isMissingColumnError(error, 'workouts', 'title')) throwSupabaseError(error)
-
-  const fallback = await supabase
-    .from('workouts')
-    .insert({ user_id: userId, started_at: startedAt })
-    .select('id,user_id,started_at,finished_at,created_at')
-    .single()
-
-  if (fallback.error) throwSupabaseError(fallback.error)
-  return { ...(fallback.data as Omit<WorkoutRow, 'title'>), title: null }
+  if (error) throwSupabaseError(error)
+  return data as WorkoutRow
 }
 
 export async function finishWorkout(
@@ -112,19 +82,8 @@ export async function finishWorkout(
     .select('id,user_id,started_at,finished_at,title,created_at')
     .single()
 
-  if (!error) return data as WorkoutRow
-  if (!isMissingColumnError(error, 'workouts', 'title')) throwSupabaseError(error)
-
-  const fallback = await supabase
-    .from('workouts')
-    .update({ finished_at: finishedAt })
-    .eq('id', workoutId)
-    .eq('user_id', userId)
-    .select('id,user_id,started_at,finished_at,created_at')
-    .single()
-
-  if (fallback.error) throwSupabaseError(fallback.error)
-  return { ...(fallback.data as Omit<WorkoutRow, 'title'>), title: null }
+  if (error) throwSupabaseError(error)
+  return data as WorkoutRow
 }
 
 export async function deleteWorkout(workoutId: string, userId: string): Promise<void> {
