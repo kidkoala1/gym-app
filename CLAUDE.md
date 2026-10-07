@@ -11,6 +11,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 There is no test suite. Requires `.env` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (read in [src/lib/supabase.ts](src/lib/supabase.ts)).
 
+GitHub Actions (`.github/workflows/ci.yml`) runs `npm ci`, build, lint and a production `npm audit` on every push to `main` and on pull requests; check the Actions tab if a push shows a red cross.
+
 Bump the `version` in `package.json` (and `package-lock.json`) with each batch of changes; it is shown in Settings via `__APP_VERSION__`.
 
 ### Supabase CLI
