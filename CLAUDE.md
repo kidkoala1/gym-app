@@ -24,7 +24,7 @@ Use `npx supabase@latest ...` (not a project dependency). Windows PowerShell 5.1
 
 ## Architecture
 
-Single-page PWA gym tracker: React 19 + TypeScript + Vite, MUI (dark theme defined in [src/main.tsx](src/main.tsx)), TanStack Query, Supabase (auth + Postgres). No router is used in practice — navigation is a `TabView` state (`workout | progress | settings | history`) in [src/App.tsx](src/App.tsx).
+Single-page PWA gym tracker: React 19 + TypeScript + Vite, MUI (dark theme defined in [src/main.tsx](src/main.tsx)), TanStack Query, Supabase (auth + Postgres). There is no router — navigation is a `TabView` state (`workout | progress | settings | history`) in [src/App.tsx](src/App.tsx).
 
 - **[src/App.tsx](src/App.tsx)** (~1200 lines) is the orchestrator: it owns the active workout state, all React Query queries/mutations, profile and background-customization settings (persisted in `localStorage`), and passes data/handlers down as props to the tab components. Tab components are mostly presentational.
 - **`src/features/<area>/`** — `auth`, `profile`, `settings`, `workouts`. Each has `api.ts` (Supabase calls) and `components/`. All DB access goes through these `api.ts` files; components don't call Supabase directly.

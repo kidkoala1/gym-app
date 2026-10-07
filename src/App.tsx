@@ -344,7 +344,23 @@ function App() {
     return buildExerciseInsightsFromWorkouts(exerciseInsightsQuery.data ?? [], canonicalExerciseInsightName)
   }, [canonicalExerciseInsightName, exerciseInsightsQuery.data])
 
-  useEffect(() => {
+  // Fill the profile form from the saved profile (falling back to the Google account's details).
+  // This runs during render, guarded by what it last synced from, instead of in an effect, so a
+  // changed profile does not cost an extra render pass. Unsaved edits are only replaced when the
+  // saved profile or the signed-in user actually changes.
+  const [syncedProfileSource, setSyncedProfileSource] = useState<{
+    userId: string | undefined
+    profile: unknown
+    metadata: unknown
+  } | null>(null)
+  if (
+    !syncedProfileSource ||
+    syncedProfileSource.userId !== user?.id ||
+    syncedProfileSource.profile !== profileQuery.data ||
+    syncedProfileSource.metadata !== user?.user_metadata
+  ) {
+    setSyncedProfileSource({ userId: user?.id, profile: profileQuery.data, metadata: user?.user_metadata })
+
     const metadataDisplay =
       (user?.user_metadata?.full_name as string | undefined) ??
       (user?.user_metadata?.name as string | undefined) ??
@@ -354,7 +370,7 @@ function App() {
     setProfileDisplayName(profileQuery.data?.display_name ?? metadataDisplay)
     setProfileAvatarUrl(profileQuery.data?.avatar_url ?? metadataAvatar)
     setIsProgressPublic(Boolean(profileQuery.data?.is_progress_public))
-  }, [profileQuery.data, user?.id, user?.user_metadata])
+  }
 
   // Resume a workout that was started but never finished (e.g. the app was closed mid-session).
   const resumeCheckedForUserRef = useRef<string | null>(null)
@@ -384,12 +400,6 @@ function App() {
         resumeCheckedForUserRef.current = null
       })
   }, [user?.id])
-
-  useEffect(() => {
-    if (activeTab !== 'settings') {
-      setSettingsView('menu')
-    }
-  }, [activeTab])
 
   const startWorkoutMutation = useMutation({
     mutationFn: async () => {
@@ -1050,7 +1060,10 @@ function App() {
 
         <Tabs
           value={activeTab}
-          onChange={(_, value: TabView) => setActiveTab(value)}
+          onChange={(_, value: TabView) => {
+            setActiveTab(value)
+            if (value !== 'settings') setSettingsView('menu')
+          }}
           variant="fullWidth"
           textColor="inherit"
           indicatorColor="secondary"
