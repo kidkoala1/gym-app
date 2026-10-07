@@ -13,6 +13,21 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Large libraries get their own files: they change rarely, so the browser (and the
+        // service worker) can keep them cached across app updates.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('@mui') || id.includes('@emotion')) return 'mui'
+          if (id.includes('@supabase')) return 'supabase'
+          if (id.includes('@tanstack')) return 'query'
+          return 'vendor'
+        },
+      },
+    },
+  },
   plugins: [react(),
     VitePWA({
   registerType: 'autoUpdate',

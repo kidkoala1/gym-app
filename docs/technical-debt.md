@@ -23,5 +23,4 @@ Remaining:
 - **`finished_at` is unreliable.** ~40% of workouts are never marked finished (the user forgets to press Finish), so nothing may filter on it for data; progress and the exercise list count any workout with sets. Only `getUnfinishedWorkout` (resume within 12 hours) uses it. Consider removing the Finish button or auto-finishing stale workouts.
 - **No Content-Security-Policy.** Needs to be set as a hosting header (a meta tag breaks the Vite dev server).
 - **Raw workout rows of public users are readable by every signed-in user** (select policies use `private.user_allows_public_progress`). Accepted for a small trusted group. Tightening it means Compare using only `get_progress_series`.
-- **`App.tsx` is ~1300 lines.** Workout, history-edit and background logic should move into hooks.
 - **No automated tests.**

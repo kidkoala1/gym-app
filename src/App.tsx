@@ -1,13 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import {
   Alert,
   Box,
-  Button,
   CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
   Menu,
   MenuItem,
   Paper,
@@ -17,815 +12,82 @@ import {
   Tabs,
   Typography,
 } from '@mui/material'
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useAuthSession } from './features/auth/useAuthSession'
+import { useQuery } from '@tanstack/react-query'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { AuthScreen } from './features/auth/components/AuthScreen'
-import { getProfile, upsertProfile } from './features/profile/api'
-import { SettingsTab } from './features/settings/components/SettingsTab'
-import { HistoryTab } from './features/workouts/components/HistoryTab'
-import { ProgressTab } from './features/workouts/components/ProgressTab'
+import { useAuthSession } from './features/auth/useAuthSession'
+import { useProfileForm } from './features/profile/useProfileForm'
+import { useBackgroundSettings } from './features/settings/useBackgroundSettings'
+import { listLoggedExerciseNames } from './features/workouts/api'
 import { WorkoutTab } from './features/workouts/components/WorkoutTab'
-import type { ExerciseInsightHistoryRow, ExerciseRow, WorkoutHistoryRow } from './types/db'
-import {
-  createExercise,
-  createWorkout,
-  deleteExercise,
-  deleteWorkout,
-  finishWorkout as finishWorkoutApi,
-  getCanonicalExerciseName,
-  getUnfinishedWorkout,
-  listExerciseInsightHistory,
-  listExercises,
-  listLoggedExerciseNames,
-  listWorkoutHistoryPage,
-  saveWorkoutEdit as saveWorkoutEditApi,
-  type WorkoutEditExercise,
-} from './features/workouts/api'
-import type {
-  ActiveWorkout,
-  ExerciseInsightSet,
-  ExerciseWeightInsights,
-  EditableHistoryExercise,
-  SetDraft,
-  SettingsView,
-} from './features/workouts/localTypes'
-import {
-  DEFAULT_EXERCISE_NAMES,
-  resolveCanonicalExerciseName,
-} from './features/workouts/defaultExercises'
+import { WORKOUT_TITLE_SUGGESTIONS } from './features/workouts/constants'
+import { DEFAULT_EXERCISE_NAMES } from './features/workouts/defaultExercises'
+import type { SettingsView } from './features/workouts/localTypes'
+import { useActiveWorkout } from './features/workouts/useActiveWorkout'
+import { useExerciseLibrary } from './features/workouts/useExerciseLibrary'
+import { useWorkoutHistory } from './features/workouts/useWorkoutHistory'
+import { getErrorMessage } from './lib/errors'
+import { fieldSx } from './lib/formStyles'
 import { supabase } from './lib/supabase'
+import { useSnackbar } from './lib/useSnackbar'
 import './App.css'
+
+// The Workout tab is what opens first, so it loads with the app. The others load on first visit.
+const ProgressTab = lazy(() =>
+  import('./features/workouts/components/ProgressTab').then((m) => ({ default: m.ProgressTab })),
+)
+const HistoryTab = lazy(() =>
+  import('./features/workouts/components/HistoryTab').then((m) => ({ default: m.HistoryTab })),
+)
+const SettingsTab = lazy(() =>
+  import('./features/settings/components/SettingsTab').then((m) => ({ default: m.SettingsTab })),
+)
 
 type TabView = 'workout' | 'progress' | 'settings' | 'history'
 
-type SnackbarState = {
-  open: boolean
-  severity: 'success' | 'error' | 'info'
-  message: string
-}
-
-const WORKOUT_TITLE_SUGGESTIONS = [
-  'Push',
-  'Pull',
-  'Legs',
-  'Upper',
-  'Lower',
-  'Full Body',
-  'Chest',
-  'Back',
-]
-
-const fieldSx = {
-  '& .MuiInputBase-root': {
-    fontSize: '16px',
-  },
-}
-
-function createInitialSetDraft(): SetDraft[] {
-  return [{ reps: '', weight: '' }]
-}
-
-function getErrorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback
-}
-
-function parseLocalizedDecimal(value: string): number {
-  return Number(value.trim().replace(',', '.'))
-}
-
-const HISTORY_PAGE_SIZE = 20
-const MAX_TITLE_LENGTH = 100
-const MAX_DISPLAY_NAME_LENGTH = 50
-const MAX_REPS = 1000
-const MAX_WEIGHT_KG = 2000
-const MAX_BACKGROUND_UPLOAD_BYTES = 2 * 1024 * 1024
-
-function normalizeWorkoutTitle(value: string): string | null {
-  const trimmed = value.trim().slice(0, MAX_TITLE_LENGTH)
-  return trimmed ? trimmed : null
-}
-
-function isValidSetValues(reps: number, weightKg: number): boolean {
-  return (
-    Number.isFinite(reps) &&
-    Number.isFinite(weightKg) &&
-    reps > 0 &&
-    reps <= MAX_REPS &&
-    weightKg >= 0 &&
-    weightKg <= MAX_WEIGHT_KG
-  )
-}
-
-function readLocal(key: string): string {
-  try {
-    return localStorage.getItem(key) || ''
-  } catch {
-    return ''
-  }
-}
-
-function storeLocal(key: string, value: string): boolean {
-  try {
-    localStorage.setItem(key, value)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function toCssUrl(value: string): string {
-  if (/^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+$/i.test(value)) return `url("${value}")`
-
-  try {
-    const url = new URL(value)
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return 'none'
-    return `url("${encodeURI(url.href).replace(/["'()\\]/g, (char) => `%${char.charCodeAt(0).toString(16)}`)}")`
-  } catch {
-    return 'none'
-  }
-}
-
-const RECENT_BEST_WINDOW_DAYS = 60
-
-function compareSetsByStrength(left: ExerciseInsightSet, right: ExerciseInsightSet): number {
-  if (left.weightKg !== right.weightKg) return left.weightKg - right.weightKg
-  if (left.reps !== right.reps) return left.reps - right.reps
-  return new Date(left.performedAt).getTime() - new Date(right.performedAt).getTime()
-}
-
-function pickTopSetInSession(sets: Array<{ reps: number; weight_kg: number }>, performedAt: string) {
-  const normalized = sets
-    .filter((set) => Number.isFinite(set.reps) && Number.isFinite(set.weight_kg))
-    .filter((set) => set.reps > 0 && set.weight_kg >= 0)
-    .map((set) => ({ reps: set.reps, weightKg: set.weight_kg, performedAt }))
-
-  if (normalized.length === 0) return null
-
-  return normalized.reduce((best, current) =>
-    compareSetsByStrength(current, best) > 0 ? current : best,
-  )
-}
-
-function buildExerciseInsightsFromWorkouts(
-  workouts: Array<Pick<WorkoutHistoryRow | ExerciseInsightHistoryRow, 'started_at' | 'workout_exercises'>>,
-  canonicalTargetName: string,
-): ExerciseWeightInsights | null {
-  if (!canonicalTargetName) return null
-  const targetName = canonicalTargetName.toLowerCase()
-
-  let lastSession: ExerciseInsightSet | null = null
-  let recentBest: ExerciseInsightSet | null = null
-  const cutoffMs = Date.now() - RECENT_BEST_WINDOW_DAYS * 24 * 60 * 60 * 1000
-
-  for (const workout of workouts) {
-    const matchingExercises = (workout.workout_exercises ?? []).filter(
-      (exercise) => exercise.canonical_exercise_name?.toLowerCase() === targetName,
-    )
-    if (matchingExercises.length === 0) continue
-
-    const topSet = pickTopSetInSession(
-      matchingExercises.flatMap((exercise) => exercise.workout_sets ?? []),
-      workout.started_at,
-    )
-    if (!topSet) continue
-
-    if (!lastSession) {
-      lastSession = topSet
-    }
-
-    const workoutTime = new Date(workout.started_at).getTime()
-    if (Number.isFinite(workoutTime) && workoutTime >= cutoffMs) {
-      if (!recentBest || compareSetsByStrength(topSet, recentBest) > 0) {
-        recentBest = topSet
-      }
-    }
-  }
-
-  return {
-    suggestedToday: lastSession ?? recentBest,
-    lastSession,
-    recentBest,
-  }
+const destructiveButtonSx = {
+  bgcolor: '#d32f2f',
+  backgroundImage: 'none',
+  '&:hover': { bgcolor: '#b71c1c', backgroundImage: 'none' },
 }
 
 function App() {
   const appVersion = __APP_VERSION__
-  const queryClient = useQueryClient()
   const { session, user, isLoading: authLoading } = useAuthSession()
+  const { snackbar, showError, showSuccess, closeSnackbar } = useSnackbar()
 
   const [activeTab, setActiveTab] = useState<TabView>('workout')
   const [settingsView, setSettingsView] = useState<SettingsView>('menu')
-
-  const [activeWorkout, setActiveWorkout] = useState<ActiveWorkout | null>(null)
-  const [isAddingExercise, setIsAddingExercise] = useState(false)
-  const [exerciseNameInput, setExerciseNameInput] = useState('')
-  const [workoutTitleInput, setWorkoutTitleInput] = useState('')
-  const [setDrafts, setSetDrafts] = useState<SetDraft[]>(createInitialSetDraft())
-
-  const [newExerciseInput, setNewExerciseInput] = useState('')
-  const [deleteTarget, setDeleteTarget] = useState<ExerciseRow | null>(null)
-
-  const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({})
-  const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null)
-  const [historyEdits, setHistoryEdits] = useState<Record<string, EditableHistoryExercise[]>>({})
-  const [editingExerciseNameInput, setEditingExerciseNameInput] = useState('')
-  const [editingSetDrafts, setEditingSetDrafts] = useState<SetDraft[]>(createInitialSetDraft())
-  const [workoutMenuAnchor, setWorkoutMenuAnchor] = useState<HTMLElement | null>(null)
-  const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null)
-  const [cancelWorkoutConfirmOpen, setCancelWorkoutConfirmOpen] = useState(false)
   const [signOutConfirmOpen, setSignOutConfirmOpen] = useState(false)
 
-  const [profileDisplayName, setProfileDisplayName] = useState('')
-  const [profileAvatarUrl, setProfileAvatarUrl] = useState('')
-  const [isProgressPublic, setIsProgressPublic] = useState(false)
-
-  const [backgroundImageUrl, setBackgroundImageUrl] = useState(() => {
-    return readLocal('backgroundImageUrl')
+  const background = useBackgroundSettings({ showError, showSuccess })
+  const profile = useProfileForm(user, { showError, showSuccess })
+  const library = useExerciseLibrary(user, showError)
+  const workout = useActiveWorkout({
+    user,
+    isWorkoutTabActive: activeTab === 'workout',
+    exerciseNames: library.exerciseNames,
+    createExerciseAsync: library.createExerciseAsync,
+    showError,
+    showSuccess,
   })
-  const [useCustomBackground, setUseCustomBackground] = useState(() => {
-    return readLocal('useCustomBackground') === 'true'
-  })
-  const [useMonkeyBackground, setUseMonkeyBackground] = useState(() => {
-    return readLocal('useMonkeyBackground') === 'true'
-  })
-  const [uploadedBackgroundData, setUploadedBackgroundData] = useState(() => {
-    return readLocal('uploadedBackgroundData')
-  })
-  const [useUploadedBackground, setUseUploadedBackground] = useState(() => {
-    return readLocal('useUploadedBackground') === 'true'
-  })
-
-  const [snackbar, setSnackbar] = useState<SnackbarState>({
-    open: false,
-    severity: 'info',
-    message: '',
+  const history = useWorkoutHistory({
+    user,
+    isHistoryTabActive: activeTab === 'history',
+    exerciseNames: library.exerciseNames,
+    createExerciseAsync: library.createExerciseAsync,
+    showError,
+    showSuccess,
   })
 
-  const exercisesQuery = useQuery({
-    queryKey: ['exercises', user?.id],
-    queryFn: () => listExercises(user!.id),
-    enabled: Boolean(user?.id),
-  })
-
-  const historyWorkoutsQuery = useInfiniteQuery({
-    queryKey: ['workout-history', user?.id],
-    queryFn: ({ pageParam }) => listWorkoutHistoryPage(user!.id, pageParam, HISTORY_PAGE_SIZE),
-    initialPageParam: 0,
-    getNextPageParam: (lastPage, allPages) => (lastPage.hasMore ? allPages.length : undefined),
-    enabled: Boolean(user?.id) && activeTab === 'history',
-  })
-  // Offset pages can overlap if a workout is added while paging, so de-duplicate by id.
-  const historyWorkouts = useMemo(() => {
-    const seen = new Set<string>()
-    return (historyWorkoutsQuery.data?.pages ?? [])
-      .flatMap((page) => page.workouts)
-      .filter((workout) => (seen.has(workout.id) ? false : (seen.add(workout.id), true)))
-  }, [historyWorkoutsQuery.data])
-
-  const profileQuery = useQuery({
-    queryKey: ['profile', user?.id],
-    queryFn: () => getProfile(user!.id),
-    enabled: Boolean(user?.id),
-  })
   const loggedExerciseNamesQuery = useQuery({
     queryKey: ['logged-exercise-names', user?.id],
     queryFn: () => listLoggedExerciseNames(),
     enabled: Boolean(user?.id) && activeTab === 'progress',
   })
-  const historyErrorMessage = historyWorkoutsQuery.isError
-    ? getErrorMessage(historyWorkoutsQuery.error, 'Could not load workout history.')
-    : null
   const loggedExerciseNamesErrorMessage = loggedExerciseNamesQuery.isError
     ? getErrorMessage(loggedExerciseNamesQuery.error, 'Could not load logged exercises.')
     : null
-
-  const exerciseLibrary = useMemo(() => exercisesQuery.data ?? [], [exercisesQuery.data])
-  const exerciseNames = useMemo(() => {
-    const merged = new Set<string>(DEFAULT_EXERCISE_NAMES.map((name) => name.toLowerCase()))
-    const names: string[] = [...DEFAULT_EXERCISE_NAMES]
-
-    exerciseLibrary.forEach((exercise) => {
-      const key = exercise.name.toLowerCase()
-      if (!merged.has(key)) {
-        merged.add(key)
-        names.push(exercise.name)
-      }
-    })
-
-    return names.sort((a, b) => a.localeCompare(b))
-  }, [exerciseLibrary])
-
-  // The canonical name comes from the database so grouping rules live in one place.
-  const [debouncedExerciseName, setDebouncedExerciseName] = useState('')
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedExerciseName(exerciseNameInput.trim()), 300)
-    return () => clearTimeout(timer)
-  }, [exerciseNameInput])
-
-  const canonicalNameQuery = useQuery({
-    queryKey: ['canonical-exercise-name', debouncedExerciseName],
-    queryFn: () => getCanonicalExerciseName(debouncedExerciseName),
-    enabled: Boolean(user?.id) && isAddingExercise && debouncedExerciseName.length > 0,
-    staleTime: 5 * 60 * 1000,
-  })
-  const canonicalExerciseInsightName = canonicalNameQuery.data ?? ''
-
-  const exerciseInsightsQuery = useQuery({
-    queryKey: ['exercise-insights', user?.id, canonicalExerciseInsightName],
-    queryFn: () => listExerciseInsightHistory(user!.id, canonicalExerciseInsightName),
-    enabled:
-      Boolean(user?.id) &&
-      activeTab === 'workout' &&
-      isAddingExercise &&
-      canonicalExerciseInsightName.length > 0,
-  })
-
-  const exerciseInsights = useMemo<ExerciseWeightInsights | null>(() => {
-    return buildExerciseInsightsFromWorkouts(exerciseInsightsQuery.data ?? [], canonicalExerciseInsightName)
-  }, [canonicalExerciseInsightName, exerciseInsightsQuery.data])
-
-  // Fill the profile form from the saved profile (falling back to the Google account's details).
-  // This runs during render, guarded by what it last synced from, instead of in an effect, so a
-  // changed profile does not cost an extra render pass. Unsaved edits are only replaced when the
-  // saved profile or the signed-in user actually changes.
-  const [syncedProfileSource, setSyncedProfileSource] = useState<{
-    userId: string | undefined
-    profile: unknown
-    metadata: unknown
-  } | null>(null)
-  if (
-    !syncedProfileSource ||
-    syncedProfileSource.userId !== user?.id ||
-    syncedProfileSource.profile !== profileQuery.data ||
-    syncedProfileSource.metadata !== user?.user_metadata
-  ) {
-    setSyncedProfileSource({ userId: user?.id, profile: profileQuery.data, metadata: user?.user_metadata })
-
-    const metadataDisplay =
-      (user?.user_metadata?.full_name as string | undefined) ??
-      (user?.user_metadata?.name as string | undefined) ??
-      ''
-    const metadataAvatar = (user?.user_metadata?.avatar_url as string | undefined) ?? ''
-
-    setProfileDisplayName(profileQuery.data?.display_name ?? metadataDisplay)
-    setProfileAvatarUrl(profileQuery.data?.avatar_url ?? metadataAvatar)
-    setIsProgressPublic(Boolean(profileQuery.data?.is_progress_public))
-  }
-
-  // Resume a workout that was started but never finished (e.g. the app was closed mid-session).
-  const resumeCheckedForUserRef = useRef<string | null>(null)
-  useEffect(() => {
-    const userId = user?.id
-    if (!userId || resumeCheckedForUserRef.current === userId) return
-    resumeCheckedForUserRef.current = userId
-
-    getUnfinishedWorkout(userId)
-      .then((workout) => {
-        if (!workout) return
-        const exercises = [...workout.workout_exercises]
-          .sort((a, b) => a.position - b.position)
-          .map((exercise) => ({
-            name: exercise.exercise_name,
-            sets: [...exercise.workout_sets]
-              .sort((a, b) => a.set_number - b.set_number)
-              .map((set) => ({ reps: Number(set.reps), weightKg: Number(set.weight_kg) })),
-          }))
-
-        setActiveWorkout(
-          (prev) => prev ?? { id: workout.id, startedAt: workout.started_at, title: workout.title, exercises },
-        )
-        setWorkoutTitleInput((prev) => prev || workout.title || '')
-      })
-      .catch(() => {
-        resumeCheckedForUserRef.current = null
-      })
-  }, [user?.id])
-
-  const startWorkoutMutation = useMutation({
-    mutationFn: async () => {
-      if (!user) throw new Error('You need to be signed in.')
-      return createWorkout(user.id, new Date().toISOString(), normalizeWorkoutTitle(workoutTitleInput))
-    },
-  })
-
-  const finishWorkoutMutation = useMutation({
-    mutationFn: async (payload: { workoutId: string }) => {
-      if (!user) throw new Error('You need to be signed in.')
-      return finishWorkoutApi(
-        payload.workoutId,
-        user.id,
-        new Date().toISOString(),
-        normalizeWorkoutTitle(workoutTitleInput),
-      )
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['workout-history', user?.id] })
-      await queryClient.invalidateQueries({ queryKey: ['exercise-progress'] })
-      await queryClient.invalidateQueries({ queryKey: ['exercise-insights'] })
-      await queryClient.invalidateQueries({ queryKey: ['logged-exercise-names', user?.id] })
-    },
-  })
-
-  const createExerciseMutation = useMutation({
-    mutationFn: async (name: string) => {
-      if (!user) throw new Error('You need to be signed in.')
-      return createExercise(user.id, name)
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] })
-    },
-  })
-
-  const deleteExerciseMutation = useMutation({
-    mutationFn: async (exerciseId: string) => {
-      if (!user) throw new Error('You need to be signed in.')
-      return deleteExercise(exerciseId, user.id)
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['exercises', user?.id] })
-    },
-  })
-
-  const deleteWorkoutMutation = useMutation({
-    mutationFn: async (workoutId: string) => {
-      if (!user) throw new Error('You need to be signed in.')
-      return deleteWorkout(workoutId, user.id)
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['workout-history', user?.id] })
-      await queryClient.invalidateQueries({ queryKey: ['exercise-progress'] })
-      await queryClient.invalidateQueries({ queryKey: ['exercise-insights'] })
-      await queryClient.invalidateQueries({ queryKey: ['logged-exercise-names', user?.id] })
-    },
-  })
-
-  const upsertProfileMutation = useMutation({
-    mutationFn: async (payload: { displayName: string; avatarUrl: string; isProgressPublic: boolean }) => {
-      if (!user) throw new Error('You need to be signed in.')
-      return upsertProfile(
-        user.id,
-        payload.displayName.trim() || null,
-        payload.avatarUrl.trim() || null,
-        payload.isProgressPublic,
-      )
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['profile', user?.id] })
-    },
-  })
-
-  function showError(message: string) {
-    setSnackbar({ open: true, severity: 'error', message })
-  }
-
-  function showSuccess(message: string) {
-    setSnackbar({ open: true, severity: 'success', message })
-  }
-
-  function handleBackgroundImageUrlChange(url: string) {
-    setBackgroundImageUrl(url)
-    storeLocal('backgroundImageUrl', url)
-  }
-
-  function handleUseCustomBackgroundChange(enabled: boolean) {
-    setUseCustomBackground(enabled)
-    storeLocal('useCustomBackground', enabled ? 'true' : 'false')
-    // Disable other backgrounds if enabling custom
-    if (enabled) {
-      if (useMonkeyBackground) {
-        setUseMonkeyBackground(false)
-        storeLocal('useMonkeyBackground', 'false')
-      }
-      if (useUploadedBackground) {
-        setUseUploadedBackground(false)
-        storeLocal('useUploadedBackground', 'false')
-      }
-    }
-  }
-
-  function handleUseMonkeyBackgroundChange(enabled: boolean) {
-    setUseMonkeyBackground(enabled)
-    storeLocal('useMonkeyBackground', enabled ? 'true' : 'false')
-    // Disable other backgrounds if enabling monkey
-    if (enabled) {
-      if (useCustomBackground) {
-        setUseCustomBackground(false)
-        storeLocal('useCustomBackground', 'false')
-      }
-      if (useUploadedBackground) {
-        setUseUploadedBackground(false)
-        storeLocal('useUploadedBackground', 'false')
-      }
-    }
-  }
-
-  function handleUploadBackgroundImage(file: File) {
-    if (!file.type.startsWith('image/')) {
-      showError('Please select an image file.')
-      return
-    }
-    if (file.size > MAX_BACKGROUND_UPLOAD_BYTES) {
-      showError('Image is too large. Please choose one under 2 MB.')
-      return
-    }
-
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const base64 = e.target?.result as string
-      if (!storeLocal('uploadedBackgroundData', base64)) {
-        showError('Could not store the image on this device (storage full or unavailable).')
-        return
-      }
-      setUploadedBackgroundData(base64)
-      setUseUploadedBackground(true)
-      storeLocal('useUploadedBackground', 'true')
-      // Disable other backgrounds
-      setUseCustomBackground(false)
-      storeLocal('useCustomBackground', 'false')
-      setUseMonkeyBackground(false)
-      storeLocal('useMonkeyBackground', 'false')
-      showSuccess('Image uploaded successfully!')
-    }
-    reader.onerror = () => {
-      showError('Failed to read the image file.')
-    }
-    reader.readAsDataURL(file)
-  }
-
-  function handleClearUploadedBackground() {
-    setUploadedBackgroundData('')
-    setUseUploadedBackground(false)
-    try {
-      localStorage.removeItem('uploadedBackgroundData')
-    } catch {
-      // storage unavailable; state is already cleared
-    }
-    storeLocal('useUploadedBackground', 'false')
-    showSuccess('Uploaded image removed.')
-  }
-
-  function handleUseUploadedBackgroundChange(enabled: boolean) {
-    setUseUploadedBackground(enabled)
-    storeLocal('useUploadedBackground', enabled ? 'true' : 'false')
-    // Disable other backgrounds if enabling uploaded
-    if (enabled) {
-      if (useCustomBackground) {
-        setUseCustomBackground(false)
-        storeLocal('useCustomBackground', 'false')
-      }
-      if (useMonkeyBackground) {
-        setUseMonkeyBackground(false)
-        storeLocal('useMonkeyBackground', 'false')
-      }
-    }
-  }
-
-  function buildEditableExercises(workoutId: string): EditableHistoryExercise[] {
-    const workout = historyWorkouts.find((item) => item.id === workoutId)
-    if (!workout) return []
-
-    return [...(workout.workout_exercises ?? [])]
-      .sort((a, b) => a.position - b.position)
-      .map((exercise) => ({
-        id: exercise.id,
-        exercise_name: exercise.exercise_name,
-        sets: [...(exercise.workout_sets ?? [])]
-          .sort((a, b) => a.set_number - b.set_number)
-          .map((set) => ({
-            id: set.id,
-            set_number: set.set_number,
-            reps: String(set.reps),
-            weight_kg: String(set.weight_kg),
-          })),
-      }))
-  }
-
-  function openWorkoutMenu(event: MouseEvent<HTMLElement>, workoutId: string) {
-    setWorkoutMenuAnchor(event.currentTarget)
-    setSelectedWorkoutId(workoutId)
-  }
-
-  function closeWorkoutMenu() {
-    setWorkoutMenuAnchor(null)
-    setSelectedWorkoutId(null)
-  }
-
-  function beginWorkoutEdit(workoutId: string) {
-    setHistoryEdits((prev) => ({
-      ...prev,
-      [workoutId]: prev[workoutId] ?? buildEditableExercises(workoutId),
-    }))
-    setEditingWorkoutId(workoutId)
-    setExpandedHistory((prev) => ({ ...prev, [workoutId]: true }))
-    setEditingExerciseNameInput('')
-    setEditingSetDrafts(createInitialSetDraft())
-    closeWorkoutMenu()
-  }
-
-  function cancelWorkoutEdit() {
-    if (!editingWorkoutId) return
-    setHistoryEdits((prev) => {
-      const next = { ...prev }
-      delete next[editingWorkoutId]
-      return next
-    })
-    setEditingWorkoutId(null)
-    setEditingExerciseNameInput('')
-    setEditingSetDrafts(createInitialSetDraft())
-  }
-
-  async function removeWorkoutFromHistory(workoutId: string) {
-    closeWorkoutMenu()
-    if (!window.confirm('Delete this entire workout? This cannot be undone.')) return
-
-    try {
-      await deleteWorkoutMutation.mutateAsync(workoutId)
-      if (editingWorkoutId === workoutId) setEditingWorkoutId(null)
-      setHistoryEdits((prev) => {
-        const next = { ...prev }
-        delete next[workoutId]
-        return next
-      })
-      showSuccess('Workout deleted.')
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Could not delete workout.')
-    }
-  }
-
-  function markHistoryExerciseDeleted(workoutId: string, exerciseId: string) {
-    setHistoryEdits((prev) => ({
-      ...prev,
-      [workoutId]: (prev[workoutId] ?? []).map((exercise) =>
-        exercise.id === exerciseId ? { ...exercise, deleted: true } : exercise,
-      ),
-    }))
-  }
-
-  function updateHistoryExerciseName(workoutId: string, exerciseId: string, value: string) {
-    setHistoryEdits((prev) => ({
-      ...prev,
-      [workoutId]: (prev[workoutId] ?? []).map((exercise) =>
-        exercise.id === exerciseId ? { ...exercise, exercise_name: value } : exercise,
-      ),
-    }))
-  }
-
-  function updateHistorySetField(
-    workoutId: string,
-    exerciseId: string,
-    setId: string,
-    field: 'reps' | 'weight_kg',
-    value: string,
-  ) {
-    setHistoryEdits((prev) => ({
-      ...prev,
-      [workoutId]: (prev[workoutId] ?? []).map((exercise) => {
-        if (exercise.id !== exerciseId) return exercise
-        return {
-          ...exercise,
-          sets: exercise.sets.map((set) => (set.id === setId ? { ...set, [field]: value } : set)),
-        }
-      }),
-    }))
-  }
-
-  function updateEditingSetDraft(index: number, field: keyof SetDraft, value: string) {
-    setEditingSetDrafts((prev) => {
-      const next = prev.map((row, i) => (i === index ? { ...row, [field]: value } : row))
-      const last = next[next.length - 1]
-      const editedIsLast = index === next.length - 1
-      const lastFilled = last.reps.trim() !== '' && last.weight.trim() !== ''
-
-      if (editedIsLast && lastFilled) next.push({ reps: '', weight: last.weight.trim() })
-      return next
-    })
-  }
-
-  function addExerciseToHistoryEdit(workoutId: string) {
-    const cleanedName = resolveCanonicalExerciseName(editingExerciseNameInput, exerciseNames).trim()
-    if (!cleanedName) return
-
-    const completedSets = editingSetDrafts
-      .filter((set) => set.reps.trim() !== '' && set.weight.trim() !== '')
-      .map((set, index) => ({
-        id: `temp-${Date.now()}-${index}`,
-        set_number: index + 1,
-        reps: String(set.reps),
-        weight_kg: String(set.weight),
-      }))
-      .filter((set) => isValidSetValues(Number(set.reps), parseLocalizedDecimal(set.weight_kg)))
-
-    if (completedSets.length === 0) return
-
-    const newExercise: EditableHistoryExercise = {
-      id: `temp-${Date.now()}`,
-      exercise_name: cleanedName,
-      sets: completedSets,
-      isNew: true,
-    }
-
-    setHistoryEdits((prev) => ({
-      ...prev,
-      [workoutId]: [...(prev[workoutId] ?? []), newExercise],
-    }))
-
-    setEditingExerciseNameInput('')
-    setEditingSetDrafts(createInitialSetDraft())
-  }
-
-  function cancelAddingExerciseToHistory() {
-    setEditingExerciseNameInput('')
-    setEditingSetDrafts(createInitialSetDraft())
-  }
-
-  async function saveWorkoutEdit(workoutId: string) {
-    const draft = historyEdits[workoutId]
-    if (!draft) return
-
-    try {
-      // Refresh auth session before making database changes
-      const { data: sessionData, error: sessionError } = await supabase.auth.refreshSession()
-      if (sessionError || !sessionData.session) {
-        throw new Error('Authentication session expired. Please refresh and try again.')
-      }
-
-      const originalNames = new Map(
-        historyWorkouts
-          .find((item) => item.id === workoutId)
-          ?.workout_exercises.map((exercise) => [exercise.id, exercise.exercise_name.trim()] as const) ?? [],
-      )
-
-      const payload: WorkoutEditExercise[] = []
-      const newLibraryNames: string[] = []
-
-      for (const exercise of draft) {
-        if (exercise.deleted) {
-          // Exercises added during this edit only exist locally; nothing to delete in the database.
-          if (!exercise.isNew) payload.push({ id: exercise.id, deleted: true })
-          continue
-        }
-
-        const cleanedName = resolveCanonicalExerciseName(exercise.exercise_name, exerciseNames).trim()
-        if (!cleanedName) throw new Error('Exercise title cannot be empty.')
-
-        if (exercise.isNew) {
-          payload.push({
-            name: cleanedName,
-            sets: exercise.sets
-              .filter((set) => isValidSetValues(Number(set.reps), parseLocalizedDecimal(set.weight_kg)))
-              .map((set) => ({ reps: Number(set.reps), weight_kg: parseLocalizedDecimal(set.weight_kg) })),
-          })
-
-          if (!exerciseNames.some((name) => name.toLowerCase() === cleanedName.toLowerCase())) {
-            newLibraryNames.push(cleanedName)
-          }
-        } else {
-          payload.push({
-            id: exercise.id,
-            // Only touch the stored name if the user changed it
-            name: exercise.exercise_name.trim() !== originalNames.get(exercise.id) ? cleanedName : undefined,
-            sets: exercise.sets.map((set) => {
-              const reps = Number(set.reps)
-              const weight = parseLocalizedDecimal(set.weight_kg)
-
-              if (!Number.isFinite(reps) || reps <= 0 || reps > MAX_REPS) {
-                throw new Error(`Reps must be between 1 and ${MAX_REPS}.`)
-              }
-              if (!Number.isFinite(weight) || weight < 0 || weight > MAX_WEIGHT_KG) {
-                throw new Error(`Weight must be between 0 and ${MAX_WEIGHT_KG} kg.`)
-              }
-
-              return { id: set.id, reps, weight_kg: weight }
-            }),
-          })
-        }
-      }
-
-      // One transaction: either the whole edit is saved or the workout is left untouched.
-      await saveWorkoutEditApi(workoutId, payload)
-
-      // Best-effort: remember new exercise names in the user's library (the edit is already saved).
-      for (const name of newLibraryNames) {
-        await createExerciseMutation.mutateAsync(name).catch(() => undefined)
-      }
-
-      await queryClient.invalidateQueries({ queryKey: ['workout-history', user?.id] })
-      await queryClient.invalidateQueries({ queryKey: ['exercise-progress'] })
-      await queryClient.invalidateQueries({ queryKey: ['exercise-insights'] })
-      await queryClient.invalidateQueries({ queryKey: ['logged-exercise-names', user?.id] })
-      setEditingWorkoutId(null)
-      setHistoryEdits((prev) => {
-        const next = { ...prev }
-        delete next[workoutId]
-        return next
-      })
-      setEditingExerciseNameInput('')
-      setEditingSetDrafts(createInitialSetDraft())
-      showSuccess('Workout updated.')
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Could not update workout.')
-    }
-  }
 
   async function handleGoogleSignIn() {
     const { error } = await supabase.auth.signInWithOAuth({
@@ -842,186 +104,14 @@ function App() {
       return
     }
 
-    resumeCheckedForUserRef.current = null
-    setActiveWorkout(null)
-    setIsAddingExercise(false)
-    setExerciseNameInput('')
-    setWorkoutTitleInput('')
-    setSetDrafts(createInitialSetDraft())
-    setProfileDisplayName('')
-    setProfileAvatarUrl('')
-    setIsProgressPublic(false)
+    workout.resetActiveWorkout()
+    profile.resetProfileForm()
     showSuccess('Signed out.')
   }
 
   async function confirmSignOut() {
     setSignOutConfirmOpen(false)
     await handleSignOut()
-  }
-
-  async function saveProfile() {
-    if (profileDisplayName.trim().length > MAX_DISPLAY_NAME_LENGTH) {
-      showError(`Display name must be at most ${MAX_DISPLAY_NAME_LENGTH} characters.`)
-      return
-    }
-    if (profileAvatarUrl.trim() && !/^https:\/\//i.test(profileAvatarUrl.trim())) {
-      showError('Profile picture URL must start with https://')
-      return
-    }
-
-    try {
-      await upsertProfileMutation.mutateAsync({
-        displayName: profileDisplayName,
-        avatarUrl: profileAvatarUrl,
-        isProgressPublic,
-      })
-      showSuccess('Profile updated.')
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Could not update profile.')
-    }
-  }
-
-  async function startWorkout() {
-    try {
-      const workout = await startWorkoutMutation.mutateAsync()
-      setActiveWorkout({
-        id: workout.id,
-        startedAt: workout.started_at,
-        title: workout.title,
-        exercises: [],
-      })
-      setIsAddingExercise(false)
-      setExerciseNameInput('')
-      setSetDrafts(createInitialSetDraft())
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Could not start workout.')
-    }
-  }
-
-  async function finishWorkout() {
-    if (!activeWorkout) return
-
-    try {
-      await finishWorkoutMutation.mutateAsync({ workoutId: activeWorkout.id })
-      setActiveWorkout(null)
-      setIsAddingExercise(false)
-      setExerciseNameInput('')
-      setWorkoutTitleInput('')
-      setSetDrafts(createInitialSetDraft())
-      showSuccess('Workout finished and saved.')
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Could not finish workout.')
-    }
-  }
-
-  async function cancelWorkout() {
-    if (!activeWorkout || !user) return
-
-    try {
-      await deleteWorkoutMutation.mutateAsync(activeWorkout.id)
-      setActiveWorkout(null)
-      setIsAddingExercise(false)
-      setExerciseNameInput('')
-      setWorkoutTitleInput('')
-      setSetDrafts(createInitialSetDraft())
-      setCancelWorkoutConfirmOpen(false)
-      showSuccess('Workout canceled.')
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Could not cancel workout.')
-    }
-  }
-
-  function openAddExercise() {
-    setIsAddingExercise(true)
-    setExerciseNameInput('')
-    setSetDrafts(createInitialSetDraft())
-  }
-
-  function handleWorkoutTitleInputChange(value: string) {
-    setWorkoutTitleInput(value)
-    setActiveWorkout((prev) => (prev ? { ...prev, title: normalizeWorkoutTitle(value) } : prev))
-  }
-
-  function updateSetDraft(index: number, field: keyof SetDraft, value: string) {
-    setSetDrafts((prev) => {
-      const next = prev.map((row, i) => (i === index ? { ...row, [field]: value } : row))
-      const last = next[next.length - 1]
-      const editedIsLast = index === next.length - 1
-      const lastFilled = last.reps.trim() !== '' && last.weight.trim() !== ''
-
-      if (editedIsLast && lastFilled) next.push({ reps: '', weight: last.weight.trim() })
-      return next
-    })
-  }
-
-  async function finishExercise() {
-    if (!activeWorkout || !user) return
-
-    const cleanedName = resolveCanonicalExerciseName(exerciseNameInput, exerciseNames).trim()
-    if (!cleanedName) return
-
-    const completedSets = setDrafts
-      .filter((set) => set.reps.trim() !== '' && set.weight.trim() !== '')
-      .map((set) => ({ reps: Number(set.reps), weightKg: parseLocalizedDecimal(set.weight) }))
-      .filter((set) => isValidSetValues(set.reps, set.weightKg))
-
-    if (completedSets.length === 0) return
-
-    try {
-      await saveWorkoutEditApi(activeWorkout.id, [
-        {
-          name: cleanedName,
-          sets: completedSets.map((set) => ({ reps: set.reps, weight_kg: set.weightKg })),
-        },
-      ])
-
-      setActiveWorkout((prev) =>
-        prev
-          ? { ...prev, exercises: [...prev.exercises, { name: cleanedName, sets: completedSets }] }
-          : prev,
-      )
-
-      if (!exerciseNames.some((name) => name.toLowerCase() === cleanedName.toLowerCase())) {
-        try {
-          await createExerciseMutation.mutateAsync(cleanedName)
-        } catch (error) {
-          const maybeDuplicate = error as Error & { code?: string | null }
-          if (maybeDuplicate.code !== '23505') throw error
-        }
-      }
-
-      await queryClient.invalidateQueries({ queryKey: ['workout-history', user.id] })
-      await queryClient.invalidateQueries({ queryKey: ['exercise-progress'] })
-      await queryClient.invalidateQueries({ queryKey: ['exercise-insights'] })
-      await queryClient.invalidateQueries({ queryKey: ['logged-exercise-names', user.id] })
-      setIsAddingExercise(false)
-      setExerciseNameInput('')
-      setSetDrafts(createInitialSetDraft())
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Could not save exercise.')
-    }
-  }
-
-  async function addExerciseToLibrary() {
-    const value = resolveCanonicalExerciseName(newExerciseInput, exerciseNames).trim()
-    if (!value) return
-
-    try {
-      await createExerciseMutation.mutateAsync(value)
-      setNewExerciseInput('')
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Could not add exercise.')
-    }
-  }
-
-  async function confirmDeleteExercise() {
-    if (!deleteTarget) return
-    try {
-      await deleteExerciseMutation.mutateAsync(deleteTarget.id)
-      setDeleteTarget(null)
-    } catch (error) {
-      showError(error instanceof Error ? error.message : 'Could not delete exercise.')
-    }
   }
 
   if (authLoading) {
@@ -1037,14 +127,10 @@ function App() {
   }
 
   return (
-    <Box 
+    <Box
       className="app-shell"
       sx={{
-        backgroundImage: useUploadedBackground && uploadedBackgroundData
-          ? toCssUrl(uploadedBackgroundData)
-          : useMonkeyBackground
-          ? `url('https://i.imgur.com/Ub9yNZH.png')`
-          : (useCustomBackground && backgroundImageUrl ? toCssUrl(backgroundImageUrl) : 'none'),
+        backgroundImage: background.backgroundImage,
         backgroundSize: 'auto',
         backgroundPosition: 'center',
         backgroundAttachment: 'fixed',
@@ -1085,128 +171,130 @@ function App() {
         </Tabs>
       </Paper>
 
-      {activeTab === 'workout' ? (
-        <WorkoutTab
-          activeWorkout={activeWorkout}
-          isAddingExercise={isAddingExercise}
-          exerciseNameInput={exerciseNameInput}
-          setDrafts={setDrafts}
-          exerciseNames={exerciseNames}
-          exercisesLoading={exercisesQuery.isLoading}
-          exerciseInsightsLoading={exerciseInsightsQuery.isLoading}
-          exerciseInsights={exerciseInsights}
-          fieldSx={fieldSx}
-          startWorkoutPending={startWorkoutMutation.isPending}
-          finishWorkoutPending={finishWorkoutMutation.isPending}
-          deleteWorkoutPending={deleteWorkoutMutation.isPending}
-          workoutTitleInput={workoutTitleInput}
-          workoutTitleSuggestions={WORKOUT_TITLE_SUGGESTIONS}
-          onStartWorkout={startWorkout}
-          onFinishWorkout={finishWorkout}
-          onOpenCancelWorkoutConfirm={() => setCancelWorkoutConfirmOpen(true)}
-          onOpenAddExercise={openAddExercise}
-          onFinishExercise={finishExercise}
-          onCancelAddExercise={() => {
-            setIsAddingExercise(false)
-            setExerciseNameInput('')
-            setSetDrafts(createInitialSetDraft())
-          }}
-          onWorkoutTitleInputChange={handleWorkoutTitleInputChange}
-          onSelectWorkoutTitleSuggestion={handleWorkoutTitleInputChange}
-          onExerciseNameInputChange={setExerciseNameInput}
-          onExerciseNameInputBlur={() =>
-            setExerciseNameInput((prev) => resolveCanonicalExerciseName(prev, exerciseNames))
-          }
-          onUpdateSetDraft={updateSetDraft}
-        />
-      ) : activeTab === 'progress' ? (
-        <ProgressTab
-          exerciseNames={loggedExerciseNamesQuery.data ?? []}
-          exerciseNamesLoading={loggedExerciseNamesQuery.isLoading}
-          exerciseNamesErrorMessage={loggedExerciseNamesErrorMessage}
-          userId={user.id}
-        />
-      ) : activeTab === 'history' ? (
-        <HistoryTab
-          isLoading={historyWorkoutsQuery.isLoading}
-          workouts={historyWorkouts}
-          hasMore={Boolean(historyWorkoutsQuery.hasNextPage)}
-          isLoadingMore={historyWorkoutsQuery.isFetchingNextPage}
-          onLoadMore={() => void historyWorkoutsQuery.fetchNextPage()}
-          errorMessage={historyErrorMessage}
-          expandedHistory={expandedHistory}
-          editingWorkoutId={editingWorkoutId}
-          historyEdits={historyEdits}
-          exerciseNames={exerciseNames}
-          editingExerciseNameInput={editingExerciseNameInput}
-          editingSetDrafts={editingSetDrafts}
-          fieldSx={fieldSx}
-          onToggleExpanded={(workoutId) =>
-            setExpandedHistory((prev) => ({ ...prev, [workoutId]: !prev[workoutId] }))
-          }
-          onOpenWorkoutMenu={openWorkoutMenu}
-          onUpdateHistoryExerciseName={updateHistoryExerciseName}
-          onMarkHistoryExerciseDeleted={markHistoryExerciseDeleted}
-          onUpdateHistorySetField={updateHistorySetField}
-          onSaveWorkoutEdit={saveWorkoutEdit}
-          onCancelWorkoutEdit={cancelWorkoutEdit}
-          onAddExerciseToHistoryEdit={addExerciseToHistoryEdit}
-          onCancelAddingExerciseToHistory={cancelAddingExerciseToHistory}
-          onEditingExerciseNameInputChange={setEditingExerciseNameInput}
-          onEditingExerciseNameInputBlur={() =>
-            setEditingExerciseNameInput((prev) => resolveCanonicalExerciseName(prev, exerciseNames))
-          }
-          onUpdateEditingSetDraft={updateEditingSetDraft}
-        />
-      ) : (
-        <SettingsTab
-          settingsView={settingsView}
-          appVersion={appVersion}
-          defaultExerciseNames={DEFAULT_EXERCISE_NAMES}
-          exerciseLibrary={exerciseLibrary}
-          profileDisplayName={profileDisplayName}
-          profileAvatarUrl={profileAvatarUrl}
-          isProgressPublic={isProgressPublic}
-          backgroundImageUrl={backgroundImageUrl}
-          useCustomBackground={useCustomBackground}
-          useMonkeyBackground={useMonkeyBackground}
-          uploadedBackgroundData={uploadedBackgroundData}
-          useUploadedBackground={useUploadedBackground}
-          fieldSx={fieldSx}
-          createExercisePending={createExerciseMutation.isPending}
-          deleteExercisePending={deleteExerciseMutation.isPending}
-          upsertProfilePending={upsertProfileMutation.isPending}
-          newExerciseInput={newExerciseInput}
-          user={user}
-          onSettingsViewChange={setSettingsView}
-          onNewExerciseInputChange={setNewExerciseInput}
-          onAddExerciseToLibrary={addExerciseToLibrary}
-          onExerciseDeleteRequest={setDeleteTarget}
-          onProfileDisplayNameChange={setProfileDisplayName}
-          onProfileAvatarUrlChange={setProfileAvatarUrl}
-          onIsProgressPublicChange={setIsProgressPublic}
-          onBackgroundImageUrlChange={handleBackgroundImageUrlChange}
-          onUseCustomBackgroundChange={handleUseCustomBackgroundChange}
-          onUseMonkeyBackgroundChange={handleUseMonkeyBackgroundChange}
-          onUploadBackgroundImage={handleUploadBackgroundImage}
-          onUseUploadedBackgroundChange={handleUseUploadedBackgroundChange}
-          onClearUploadedBackground={handleClearUploadedBackground}
-          onSaveProfile={saveProfile}
-          onRequestSignOut={() => setSignOutConfirmOpen(true)}
-        />
-      )}
+      <Suspense
+        fallback={
+          <Box sx={{ display: 'grid', placeItems: 'center', py: 4 }}>
+            <CircularProgress size={26} />
+          </Box>
+        }
+      >
+        {activeTab === 'workout' ? (
+          <WorkoutTab
+            activeWorkout={workout.activeWorkout}
+            isAddingExercise={workout.isAddingExercise}
+            exerciseNameInput={workout.exerciseNameInput}
+            setDrafts={workout.setDrafts}
+            exerciseNames={library.exerciseNames}
+            exercisesLoading={library.exercisesLoading}
+            exerciseInsightsLoading={workout.exerciseInsightsLoading}
+            exerciseInsights={workout.exerciseInsights}
+            fieldSx={fieldSx}
+            startWorkoutPending={workout.startWorkoutPending}
+            finishWorkoutPending={workout.finishWorkoutPending}
+            deleteWorkoutPending={workout.cancelWorkoutPending}
+            workoutTitleInput={workout.workoutTitleInput}
+            workoutTitleSuggestions={WORKOUT_TITLE_SUGGESTIONS}
+            onStartWorkout={workout.startWorkout}
+            onFinishWorkout={workout.finishWorkout}
+            onOpenCancelWorkoutConfirm={() => workout.setCancelWorkoutConfirmOpen(true)}
+            onOpenAddExercise={workout.openAddExercise}
+            onFinishExercise={workout.finishExercise}
+            onCancelAddExercise={workout.cancelAddExercise}
+            onWorkoutTitleInputChange={workout.handleWorkoutTitleInputChange}
+            onSelectWorkoutTitleSuggestion={workout.handleWorkoutTitleInputChange}
+            onExerciseNameInputChange={workout.setExerciseNameInput}
+            onExerciseNameInputBlur={workout.normalizeExerciseNameInput}
+            onUpdateSetDraft={workout.updateSetDraft}
+          />
+        ) : activeTab === 'progress' ? (
+          <ProgressTab
+            exerciseNames={loggedExerciseNamesQuery.data ?? []}
+            exerciseNamesLoading={loggedExerciseNamesQuery.isLoading}
+            exerciseNamesErrorMessage={loggedExerciseNamesErrorMessage}
+            userId={user.id}
+          />
+        ) : activeTab === 'history' ? (
+          <HistoryTab
+            isLoading={history.isLoading}
+            workouts={history.workouts}
+            hasMore={history.hasMore}
+            isLoadingMore={history.isLoadingMore}
+            onLoadMore={history.loadMore}
+            errorMessage={history.errorMessage}
+            expandedHistory={history.expandedHistory}
+            editingWorkoutId={history.editingWorkoutId}
+            historyEdits={history.historyEdits}
+            exerciseNames={library.exerciseNames}
+            editingExerciseNameInput={history.editingExerciseNameInput}
+            editingSetDrafts={history.editingSetDrafts}
+            fieldSx={fieldSx}
+            onToggleExpanded={history.toggleExpanded}
+            onOpenWorkoutMenu={history.openWorkoutMenu}
+            onUpdateHistoryExerciseName={history.updateHistoryExerciseName}
+            onMarkHistoryExerciseDeleted={history.markHistoryExerciseDeleted}
+            onUpdateHistorySetField={history.updateHistorySetField}
+            onSaveWorkoutEdit={history.saveWorkoutEdit}
+            onCancelWorkoutEdit={history.cancelWorkoutEdit}
+            onAddExerciseToHistoryEdit={history.addExerciseToHistoryEdit}
+            onCancelAddingExerciseToHistory={history.cancelAddingExerciseToHistory}
+            onEditingExerciseNameInputChange={history.setEditingExerciseNameInput}
+            onEditingExerciseNameInputBlur={history.normalizeEditingExerciseName}
+            onUpdateEditingSetDraft={history.updateEditingSetDraft}
+          />
+        ) : (
+          <SettingsTab
+            settingsView={settingsView}
+            appVersion={appVersion}
+            defaultExerciseNames={DEFAULT_EXERCISE_NAMES}
+            exerciseLibrary={library.exerciseLibrary}
+            profileDisplayName={profile.profileDisplayName}
+            profileAvatarUrl={profile.profileAvatarUrl}
+            isProgressPublic={profile.isProgressPublic}
+            backgroundImageUrl={background.backgroundImageUrl}
+            useCustomBackground={background.useCustomBackground}
+            useMonkeyBackground={background.useMonkeyBackground}
+            uploadedBackgroundData={background.uploadedBackgroundData}
+            useUploadedBackground={background.useUploadedBackground}
+            fieldSx={fieldSx}
+            createExercisePending={library.createExercisePending}
+            deleteExercisePending={library.deleteExercisePending}
+            upsertProfilePending={profile.isSavingProfile}
+            newExerciseInput={library.newExerciseInput}
+            user={user}
+            onSettingsViewChange={setSettingsView}
+            onNewExerciseInputChange={library.setNewExerciseInput}
+            onAddExerciseToLibrary={library.addExerciseToLibrary}
+            onExerciseDeleteRequest={library.setDeleteTarget}
+            onProfileDisplayNameChange={profile.setProfileDisplayName}
+            onProfileAvatarUrlChange={profile.setProfileAvatarUrl}
+            onIsProgressPublicChange={profile.setIsProgressPublic}
+            onBackgroundImageUrlChange={background.handleBackgroundImageUrlChange}
+            onUseCustomBackgroundChange={background.handleUseCustomBackgroundChange}
+            onUseMonkeyBackgroundChange={background.handleUseMonkeyBackgroundChange}
+            onUploadBackgroundImage={background.handleUploadBackgroundImage}
+            onUseUploadedBackgroundChange={background.handleUseUploadedBackgroundChange}
+            onClearUploadedBackground={background.handleClearUploadedBackground}
+            onSaveProfile={profile.saveProfile}
+            onRequestSignOut={() => setSignOutConfirmOpen(true)}
+          />
+        )}
+      </Suspense>
 
-      <Menu anchorEl={workoutMenuAnchor} open={Boolean(workoutMenuAnchor)} onClose={closeWorkoutMenu}>
+      <Menu
+        anchorEl={history.workoutMenuAnchor}
+        open={Boolean(history.workoutMenuAnchor)}
+        onClose={history.closeWorkoutMenu}
+      >
         <MenuItem
           onClick={() => {
-            if (selectedWorkoutId) beginWorkoutEdit(selectedWorkoutId)
+            if (history.selectedWorkoutId) history.beginWorkoutEdit(history.selectedWorkoutId)
           }}
         >
           Edit workout
         </MenuItem>
         <MenuItem
           onClick={() => {
-            if (selectedWorkoutId) void removeWorkoutFromHistory(selectedWorkoutId)
+            if (history.selectedWorkoutId) void history.removeWorkoutFromHistory(history.selectedWorkoutId)
           }}
           sx={{ color: '#ff8ea6' }}
         >
@@ -1214,122 +302,46 @@ function App() {
         </MenuItem>
       </Menu>
 
-      <Dialog
+      <ConfirmDialog
         open={signOutConfirmOpen}
-        onClose={() => setSignOutConfirmOpen(false)}
-        fullWidth
-        maxWidth="xs"
-        PaperProps={{
-          sx: {
-            border: '1px solid rgba(179, 149, 255, 0.4)',
-            borderRadius: 2,
-            background: 'linear-gradient(180deg, rgba(29, 21, 58, 0.96), rgba(20, 15, 43, 0.96))',
-            color: '#eef0ff',
-          },
-        }}
+        title="Sign out?"
+        confirmLabel="Sign out"
+        confirmButtonProps={{ sx: destructiveButtonSx }}
+        onCancel={() => setSignOutConfirmOpen(false)}
+        onConfirm={confirmSignOut}
       >
-        <DialogTitle>Sign out?</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2">You will need to sign in again to continue.</Typography>
-        </DialogContent>
-        <DialogActions sx={{ px: 2, pb: 2 }}>
-          <Button variant="outlined" onClick={() => setSignOutConfirmOpen(false)}>
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            onClick={confirmSignOut}
-            sx={{
-              bgcolor: '#d32f2f',
-              backgroundImage: 'none',
-              '&:hover': { bgcolor: '#b71c1c', backgroundImage: 'none' },
-            }}
-          >
-            Sign out
-          </Button>
-        </DialogActions>
-      </Dialog>
+        <Typography variant="body2">You will need to sign in again to continue.</Typography>
+      </ConfirmDialog>
 
-      <Dialog
-        open={Boolean(deleteTarget)}
-        onClose={() => setDeleteTarget(null)}
-        fullWidth
-        maxWidth="xs"
-        PaperProps={{
-          sx: {
-            border: '1px solid rgba(179, 149, 255, 0.4)',
-            borderRadius: 2,
-            background: 'linear-gradient(180deg, rgba(29, 21, 58, 0.96), rgba(20, 15, 43, 0.96))',
-            color: '#eef0ff',
-          },
-        }}
+      <ConfirmDialog
+        open={Boolean(library.deleteTarget)}
+        title="Delete exercise?"
+        confirmLabel="Delete"
+        confirmButtonProps={{ color: 'error', disabled: library.deleteExercisePending }}
+        onCancel={() => library.setDeleteTarget(null)}
+        onConfirm={library.confirmDeleteExercise}
       >
-        <DialogTitle>Delete exercise?</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2">
-            This will remove <strong>{deleteTarget?.name}</strong> from your exercise list.
-          </Typography>
-        </DialogContent>
-        <DialogActions sx={{ px: 2, pb: 2 }}>
-          <Button variant="outlined" onClick={() => setDeleteTarget(null)}>
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            color="error"
-            onClick={confirmDeleteExercise}
-            disabled={deleteExerciseMutation.isPending}
-          >
-            Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
+        <Typography variant="body2">
+          This will remove <strong>{library.deleteTarget?.name}</strong> from your exercise list.
+        </Typography>
+      </ConfirmDialog>
 
-      <Dialog
-        open={cancelWorkoutConfirmOpen}
-        onClose={() => setCancelWorkoutConfirmOpen(false)}
-        fullWidth
-        maxWidth="xs"
-        PaperProps={{
-          sx: {
-            border: '1px solid rgba(179, 149, 255, 0.4)',
-            borderRadius: 2,
-            background: 'linear-gradient(180deg, rgba(29, 21, 58, 0.96), rgba(20, 15, 43, 0.96))',
-            color: '#eef0ff',
-          },
-        }}
+      <ConfirmDialog
+        open={workout.cancelWorkoutConfirmOpen}
+        title="Cancel workout?"
+        cancelLabel="Keep workout"
+        confirmLabel="Cancel workout"
+        confirmButtonProps={{ color: 'error', disabled: workout.cancelWorkoutPending }}
+        onCancel={() => workout.setCancelWorkoutConfirmOpen(false)}
+        onConfirm={workout.cancelWorkout}
       >
-        <DialogTitle>Cancel workout?</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2">
-            This will delete the current in-progress workout and all exercises added to it.
-          </Typography>
-        </DialogContent>
-        <DialogActions sx={{ px: 2, pb: 2 }}>
-          <Button variant="outlined" onClick={() => setCancelWorkoutConfirmOpen(false)}>
-            Keep workout
-          </Button>
-          <Button
-            variant="contained"
-            color="error"
-            onClick={cancelWorkout}
-            disabled={deleteWorkoutMutation.isPending}
-          >
-            Cancel workout
-          </Button>
-        </DialogActions>
-      </Dialog>
+        <Typography variant="body2">
+          This will delete the current in-progress workout and all exercises added to it.
+        </Typography>
+      </ConfirmDialog>
 
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={3500}
-        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-      >
-        <Alert
-          severity={snackbar.severity}
-          variant="filled"
-          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-        >
+      <Snackbar open={snackbar.open} autoHideDuration={3500} onClose={closeSnackbar}>
+        <Alert severity={snackbar.severity} variant="filled" onClose={closeSnackbar}>
           {snackbar.message}
         </Alert>
       </Snackbar>
