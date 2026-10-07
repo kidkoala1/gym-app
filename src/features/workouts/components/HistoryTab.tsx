@@ -108,7 +108,7 @@ export function HistoryTab({
         ) : errorMessage ? (
           <Typography className="muted">{errorMessage}</Typography>
         ) : workouts.length === 0 ? (
-          <Typography className="muted">No completed workouts yet.</Typography>
+          <Typography className="muted">No workouts yet.</Typography>
         ) : (
           <List disablePadding sx={{ display: 'grid', gap: 1 }}>
             {workouts.map((workout) => {

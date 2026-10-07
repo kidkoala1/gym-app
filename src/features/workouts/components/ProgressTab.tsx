@@ -437,7 +437,7 @@ export function ProgressTab({
     if (mineUnavailable) return getErrorMessage(mineProgressQuery.error) ?? 'Unable to load your progress.'
     if (exerciseNamesLoading) return 'Loading exercises...'
     if (exerciseNamesErrorMessage) return exerciseNamesErrorMessage
-    if (noExerciseData) return 'No completed workout data yet. Finish workouts to compare.'
+    if (noExerciseData) return 'No workout data yet. Log some workouts to compare.'
     if (profilesQuery.isLoading) return 'Loading users to compare...'
     if (profilesQuery.isError) return 'Unable to load users to compare right now.'
     if (compareProfiles.length === 0) return 'No public users available to compare yet.'
@@ -517,7 +517,7 @@ export function ProgressTab({
             ) : exerciseNamesErrorMessage ? (
               <Typography className="muted">{exerciseNamesErrorMessage}</Typography>
             ) : noExerciseData ? (
-              <Typography className="muted">No completed workout data yet. Finish workouts to see progress.</Typography>
+              <Typography className="muted">No workout data yet. Log some workouts to see progress.</Typography>
             ) : (
               <TextField
                 select
