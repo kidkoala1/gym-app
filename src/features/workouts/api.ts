@@ -239,7 +239,7 @@ export async function listWorkoutHistory(userId: string): Promise<WorkoutHistory
   const { data, error } = await supabase
     .from('workouts')
     .select(
-      'id,started_at,finished_at,title,workout_exercises(id,exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
+      'id,started_at,finished_at,title,workout_exercises(id,exercise_name,canonical_exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
     )
     .eq('user_id', userId)
     .order('started_at', { ascending: false })
@@ -250,7 +250,7 @@ export async function listWorkoutHistory(userId: string): Promise<WorkoutHistory
   const fallback = await supabase
     .from('workouts')
     .select(
-      'id,started_at,finished_at,workout_exercises(id,exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
+      'id,started_at,finished_at,workout_exercises(id,exercise_name,canonical_exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
     )
     .eq('user_id', userId)
     .order('started_at', { ascending: false })
@@ -265,36 +265,42 @@ export async function listWorkoutHistory(userId: string): Promise<WorkoutHistory
 export async function listLoggedExerciseNames(userId: string): Promise<string[]> {
   const { data, error } = await supabase
     .from('workouts')
-    .select('workout_exercises(exercise_name)')
+    .select('workout_exercises(canonical_exercise_name)')
     .eq('user_id', userId)
 
   if (error) throwSupabaseError(error)
 
-  const names = new Map<string, string>()
+  const names = new Set<string>()
   for (const workout of data ?? []) {
     for (const exercise of workout.workout_exercises ?? []) {
-      const name = exercise.exercise_name?.trim()
-      if (!name) continue
-      names.set(name.toLowerCase(), name)
+      const name = exercise.canonical_exercise_name?.trim()
+      if (name) names.add(name)
     }
   }
 
-  return [...names.values()].sort((a, b) => a.localeCompare(b))
+  return [...names].sort((a, b) => a.localeCompare(b))
+}
+
+export async function getCanonicalExerciseName(name: string): Promise<string> {
+  const { data, error } = await supabase.rpc('canonical_exercise_name', { name })
+
+  if (error) throwSupabaseError(error)
+  return (data as string | null) ?? name.trim()
 }
 
 export async function listExerciseInsightHistory(
   userId: string,
-  exerciseNames: string[],
+  canonicalExerciseName: string,
 ): Promise<ExerciseInsightHistoryRow[]> {
-  if (exerciseNames.length === 0) return []
+  if (!canonicalExerciseName) return []
 
   const { data, error } = await supabase
     .from('workouts')
     .select(
-      'id,started_at,workout_exercises!inner(id,exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
+      'id,started_at,workout_exercises!inner(id,exercise_name,canonical_exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
     )
     .eq('user_id', userId)
-    .in('workout_exercises.exercise_name', exerciseNames)
+    .eq('workout_exercises.canonical_exercise_name', canonicalExerciseName)
     .order('started_at', { ascending: false })
 
   if (error) throwSupabaseError(error)

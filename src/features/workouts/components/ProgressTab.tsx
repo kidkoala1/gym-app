@@ -2,15 +2,8 @@ import { Box, Button, CircularProgress, MenuItem, Paper, Stack, TextField, Typog
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { getProfile } from '../../profile/api'
-import {
-  getProgressSeries,
-  listExerciseInsightHistory,
-  listLoggedExerciseNames,
-  listWorkoutHistory,
-  searchPublicProfiles,
-} from '../api'
-import { resolveCanonicalExerciseName } from '../defaultExercises'
-import type { ExerciseInsightHistoryRow, ProgressSeriesRow, WorkoutHistoryRow } from '../../../types/db'
+import { getProgressSeries, searchPublicProfiles } from '../api'
+import type { ProgressSeriesRow } from '../../../types/db'
 
 type ProgressTabProps = {
   exerciseNames: string[]
@@ -59,17 +52,6 @@ function formatDateLabel(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-function normalizeExerciseName(value: string): string {
-  return value.trim().toLowerCase()
-}
-
-function getRangeCutoff(range: RangeKey): number | null {
-  if (range === 'all') return null
-  const now = Date.now()
-  const days = range === '30d' ? 30 : range === '90d' ? 90 : 365
-  return now - days * 24 * 60 * 60 * 1000
-}
-
 function getRangeDays(range: RangeKey): number | null {
   if (range === 'all') return null
   return range === '30d' ? 30 : range === '90d' ? 90 : 365
@@ -93,78 +75,6 @@ function combineSeries(primary: SeriesPoint[], secondary: SeriesPoint[]): Combin
         secondary: secondaryPoint?.value,
       }
     })
-}
-
-function buildExerciseDailyProgress(
-  workouts: Array<Pick<WorkoutHistoryRow | ExerciseInsightHistoryRow, 'started_at' | 'workout_exercises'>>,
-  exerciseName: string,
-  range: RangeKey,
-  matchingExerciseNames: string[] = [exerciseName],
-): DailyProgressEntry[] {
-  if (!exerciseName) return []
-  const cutoff = getRangeCutoff(range)
-  const targetNames = new Set(matchingExerciseNames.map(normalizeExerciseName))
-  const byDate = new Map<string, DailyProgressEntry>()
-
-  workouts.forEach((workout) => {
-    const timestamp = new Date(workout.started_at).getTime()
-    if (cutoff !== null && timestamp < cutoff) return
-
-    const matching = (workout.workout_exercises ?? []).filter(
-      (exercise) => targetNames.has(normalizeExerciseName(exercise.exercise_name)),
-    )
-    const sets = matching.flatMap((exercise) => exercise.workout_sets ?? [])
-    if (sets.length === 0) return
-
-    const dateKey = toDateKey(workout.started_at)
-    const nextMax = Math.max(...sets.map((set) => set.weight_kg))
-    const nextVolume = sets.reduce((sum, set) => sum + set.reps * set.weight_kg, 0)
-    const nextReps = sets.reduce((sum, set) => sum + set.reps, 0)
-    const existing = byDate.get(dateKey)
-
-    if (existing) {
-      byDate.set(dateKey, {
-        ...existing,
-        maxWeight: Math.max(existing.maxWeight, nextMax),
-        totalVolume: existing.totalVolume + nextVolume,
-        totalReps: existing.totalReps + nextReps,
-      })
-      return
-    }
-
-    byDate.set(dateKey, {
-      dateKey,
-      dateLabel: formatDateLabel(dateKey),
-      maxWeight: nextMax,
-      totalVolume: nextVolume,
-      totalReps: nextReps,
-    })
-  })
-
-  return [...byDate.values()].sort((a, b) => a.dateKey.localeCompare(b.dateKey))
-}
-
-function buildMatchingExerciseNames(
-  selectedExercise: string,
-  knownExerciseNames: string[],
-  candidateExerciseNames: string[],
-): string[] {
-  const canonicalSelected = resolveCanonicalExerciseName(selectedExercise, knownExerciseNames)
-  const targetName = normalizeExerciseName(canonicalSelected || selectedExercise)
-  const names = new Map<string, string>()
-
-  for (const name of [selectedExercise, canonicalSelected, ...candidateExerciseNames]) {
-    const trimmed = name.trim()
-    if (!trimmed) continue
-
-    const canonical = resolveCanonicalExerciseName(trimmed, knownExerciseNames)
-    if (normalizeExerciseName(canonical || trimmed) === targetName || normalizeExerciseName(trimmed) === targetName) {
-      names.set(normalizeExerciseName(trimmed), trimmed)
-      if (canonical) names.set(normalizeExerciseName(canonical), canonical)
-    }
-  }
-
-  return [...names.values()]
 }
 
 function mapProgressSeriesToDailyProgress(series: ProgressSeriesRow[]): DailyProgressEntry[] {
@@ -213,44 +123,9 @@ async function getExerciseProgressDaily(
   targetUserId: string,
   exerciseName: string,
   range: RangeKey,
-  fallback:
-    | { type: 'full-history' }
-    | { type: 'matching-exercises'; exerciseNames: string[] }
-    | { type: 'none' },
 ): Promise<DailyProgressEntry[]> {
-  let rpcProgress: DailyProgressEntry[] = []
-  let rpcError: unknown = null
-
-  try {
-    const series = await getProgressSeries(targetUserId, exerciseName, getRangeDays(range))
-    rpcProgress = mapProgressSeriesToDailyProgress(series)
-  } catch (error) {
-    if (isPermissionDeniedError(error)) throw error
-    rpcError = error
-  }
-
-  if (fallback.type === 'matching-exercises') {
-    const history = await listExerciseInsightHistory(targetUserId, fallback.exerciseNames)
-    const fallbackProgress = buildExerciseDailyProgress(history, exerciseName, range, fallback.exerciseNames)
-
-    if (fallbackProgress.length > 0) return fallbackProgress
-    if (rpcProgress.length === 0 && rpcError) throw rpcError
-    return rpcProgress
-  }
-
-  if (rpcProgress.length > 0) return rpcProgress
-
-  if (fallback.type === 'none') {
-    if (rpcError) throw rpcError
-    return []
-  }
-
-  if (fallback.type === 'full-history') {
-    const history = await listWorkoutHistory(targetUserId)
-    return buildExerciseDailyProgress(history, exerciseName, range)
-  }
-
-  return []
+  const series = await getProgressSeries(targetUserId, exerciseName, getRangeDays(range))
+  return mapProgressSeriesToDailyProgress(series)
 }
 
 function CompareLineChart({
@@ -471,53 +346,21 @@ export function ProgressTab({
     compareProfileQuery.isSuccess &&
     compareProfileQuery.data?.is_progress_public === false
 
-  const compareKnownPublic =
-    mode === 'compare' &&
-    Boolean(effectiveCompareUserId) &&
-    (isCompareOwner || (compareProfileQuery.isSuccess && compareProfileQuery.data?.is_progress_public === true))
-
-  const compareExerciseNamesQuery = useQuery({
-    queryKey: ['logged-exercise-names', effectiveCompareUserId],
-    queryFn: () => listLoggedExerciseNames(effectiveCompareUserId),
-    enabled: compareKnownPublic,
-  })
-
-  const compareMatchingExerciseNames = useMemo(() => {
-    return buildMatchingExerciseNames(
-      activeExercise,
-      [...exerciseNames, ...(compareExerciseNamesQuery.data ?? [])],
-      compareExerciseNamesQuery.data ?? [],
-    )
-  }, [activeExercise, compareExerciseNamesQuery.data, exerciseNames])
-
-  const ownMatchingExerciseNames = useMemo(() => {
-    return buildMatchingExerciseNames(activeExercise, exerciseNames, exerciseNames)
-  }, [activeExercise, exerciseNames])
-
   const mineProgressQuery = useQuery({
-    queryKey: ['exercise-progress', userId, activeExercise, range, ownMatchingExerciseNames],
-    queryFn: () =>
-      getExerciseProgressDaily(userId, activeExercise, range, {
-        type: 'matching-exercises',
-        exerciseNames: ownMatchingExerciseNames,
-      }),
+    queryKey: ['exercise-progress', userId, activeExercise, range],
+    queryFn: () => getExerciseProgressDaily(userId, activeExercise, range),
     enabled: Boolean(activeExercise) && !noExerciseData,
   })
   const mineUnavailable = mineProgressQuery.isError
 
   const compareProgressQuery = useQuery({
-    queryKey: ['exercise-progress', effectiveCompareUserId, activeExercise, range, compareMatchingExerciseNames],
-    queryFn: () =>
-      getExerciseProgressDaily(effectiveCompareUserId, activeExercise, range, {
-        type: compareKnownPublic ? 'matching-exercises' : 'none',
-        exerciseNames: compareMatchingExerciseNames,
-      }),
+    queryKey: ['exercise-progress', effectiveCompareUserId, activeExercise, range],
+    queryFn: () => getExerciseProgressDaily(effectiveCompareUserId, activeExercise, range),
     enabled:
       mode === 'compare' &&
       Boolean(effectiveCompareUserId) &&
       Boolean(activeExercise) &&
       !compareKnownPrivate &&
-      (!compareKnownPublic || !compareExerciseNamesQuery.isLoading) &&
       !mineUnavailable &&
       !noExerciseData,
   })
@@ -601,7 +444,6 @@ export function ProgressTab({
     if (!effectiveCompareUserId) return 'Select a user to compare.'
     if (compareKnownPrivate) return "This user's progress is private."
     if (compareProfileQuery.isLoading) return 'Checking profile visibility...'
-    if (compareKnownPublic && compareExerciseNamesQuery.isLoading) return 'Loading compare data...'
     if (compareProgressQuery.isLoading) return 'Loading compare data...'
     if (compareHasPermissionError) return "You do not have permission to view this user's progress."
     if (compareProgressQuery.isError) {
@@ -624,8 +466,6 @@ export function ProgressTab({
     compareKnownPrivate,
     compareProfileQuery.isLoading,
     compareProfileQuery.data,
-    compareKnownPublic,
-    compareExerciseNamesQuery.isLoading,
     compareProgressQuery.isLoading,
     compareHasPermissionError,
     compareProgressQuery.error,

@@ -1,36 +1,29 @@
 # Technical Debt
 
-## Canonical Exercise Names
+## Canonical Exercise Names (done in 0.6.0)
 
-Progress and compare charts still depend on matching exercise names that users typed or selected in the past. The app has frontend alias handling, but the database currently stores only the display/raw exercise name on `workout_exercises`.
+`workout_exercises.exercise_name` is the display name the user logged. `canonical_exercise_name` is derived by a trigger from `private.exercise_aliases` and is what progress and compare group on. Unseen names register themselves on first use (first spelling wins; a spelling with capital letters is preferred during the initial backfill).
 
-This can cause related names to drift apart, for example:
+Merge or split names without a deploy, from the SQL editor:
 
-- `Reverse Fly`
-- `Rear Delt Fly`
-- `Reverse Pec Deck`
+```sql
+select private.set_exercise_alias('reverse fly', 'Rear Delt Fly');   -- merge
+select private.recompute_canonical_exercise_names();                  -- after hand-editing aliases
+```
 
-The current frontend fallback handles many of these cases, but it is a bridge rather than the long-term model.
+The first seed was deliberately conservative: only case/spacing variants, the built-in alias map and two typos were merged. Gym-specific names (`... sloterdijk`, `... Gordel`, `Pendulum Squat 2`) and judgement calls (`reverse fly` vs `Rear Delt Fly` vs `Reverse Pec Deck`, `pull ups` vs `Pull-Up`, tricep extension variants) are still separate groups.
 
-### Proposed Fix
+Remaining:
 
-Add a `canonical_exercise_name` column to `workout_exercises`.
+- The built-in names and aliases exist in two places: `defaultExercises.ts` (typing UX) and the seed in `20260510_canonical_exercise_names.sql`. New built-in aliases need a `set_exercise_alias` call as well.
+- The frontend still resolves typed names with `resolveCanonicalExerciseName` before saving, which can change the stored display name (for example `ohp` becomes `Overhead Press`).
 
-New rows should store both:
+## Other open items
 
-- `exercise_name`: the display name saved for the workout.
-- `canonical_exercise_name`: the normalized name used for progress grouping and compare queries.
-
-Existing rows need a one-time backfill so old workouts participate in progress charts consistently.
-
-### Implementation Checklist
-
-- Add a database migration for `workout_exercises.canonical_exercise_name`.
-- Backfill existing rows using the same alias rules as `resolveCanonicalExerciseName`.
-- Update workout insert and history-edit paths to write both names.
-- Update progress RPCs/queries to filter by `canonical_exercise_name`.
-- Remove or simplify frontend fallback logic once the database is the source of truth.
-
-### When To Do This
-
-Prioritize this before adding more Progress or Compare features, especially leaderboards, personal records, more chart types, or broader multi-user sharing.
+- **History edits are not atomic.** `saveWorkoutEdit` issues many separate writes; a mid-way failure leaves a partial edit. Needs a Postgres function that applies the whole edit in one transaction.
+- **Unbounded queries.** `listWorkoutHistory` and `listLoggedExerciseNames` fetch everything for a user. Add pagination or move to RPCs.
+- **`title` fallbacks in `workouts/api.ts`.** The column exists everywhere now; the missing-column retry paths can be removed.
+- **No Content-Security-Policy.** Needs to be set as a hosting header (a meta tag breaks the Vite dev server).
+- **Raw workout rows of public users are readable by every signed-in user** (select policies use `private.user_allows_public_progress`). Accepted for a small trusted group. Tightening it means Compare using only `get_progress_series`.
+- **`App.tsx` is ~1300 lines.** Workout, history-edit and background logic should move into hooks.
+- **No automated tests.**

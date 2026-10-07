@@ -61,6 +61,7 @@ export interface WorkoutHistorySet {
 export interface WorkoutHistoryExercise {
   id: string
   exercise_name: string
+  canonical_exercise_name: string
   position: number
   workout_sets: WorkoutHistorySet[]
 }

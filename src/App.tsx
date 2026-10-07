@@ -33,6 +33,7 @@ import {
   deleteWorkout,
   deleteWorkoutExercise,
   finishWorkout as finishWorkoutApi,
+  getCanonicalExerciseName,
   getUnfinishedWorkout,
   insertWorkoutExercise,
   insertWorkoutSets,
@@ -169,20 +170,10 @@ function pickTopSetInSession(sets: Array<{ reps: number; weight_kg: number }>, p
 
 function buildExerciseInsightsFromWorkouts(
   workouts: Array<Pick<WorkoutHistoryRow | ExerciseInsightHistoryRow, 'started_at' | 'workout_exercises'>>,
-  targetName: string,
-  exerciseNames: string[],
+  canonicalTargetName: string,
 ): ExerciseWeightInsights | null {
-  const canonicalNameCache = new Map<string, string>()
-  const canonicalizeToLower = (name: string) => {
-    const cacheKey = name.trim().toLowerCase()
-    if (canonicalNameCache.has(cacheKey)) return canonicalNameCache.get(cacheKey) as string
-
-    const canonical = resolveCanonicalExerciseName(name, exerciseNames).toLowerCase()
-    canonicalNameCache.set(cacheKey, canonical)
-    return canonical
-  }
-
-  if (!targetName) return null
+  if (!canonicalTargetName) return null
+  const targetName = canonicalTargetName.toLowerCase()
 
   let lastSession: ExerciseInsightSet | null = null
   let recentBest: ExerciseInsightSet | null = null
@@ -190,7 +181,7 @@ function buildExerciseInsightsFromWorkouts(
 
   for (const workout of workouts) {
     const matchingExercises = (workout.workout_exercises ?? []).filter(
-      (exercise) => canonicalizeToLower(exercise.exercise_name) === targetName,
+      (exercise) => exercise.canonical_exercise_name?.toLowerCase() === targetName,
     )
     if (matchingExercises.length === 0) continue
 
@@ -292,7 +283,7 @@ function App() {
   const loggedExerciseNamesQuery = useQuery({
     queryKey: ['logged-exercise-names', user?.id],
     queryFn: () => listLoggedExerciseNames(user!.id),
-    enabled: Boolean(user?.id) && (activeTab === 'progress' || (activeTab === 'workout' && isAddingExercise)),
+    enabled: Boolean(user?.id) && activeTab === 'progress',
   })
   const historyErrorMessage = historyWorkoutsQuery.isError
     ? getErrorMessage(historyWorkoutsQuery.error, 'Could not load workout history.')
@@ -317,51 +308,40 @@ function App() {
     return names.sort((a, b) => a.localeCompare(b))
   }, [exerciseLibrary])
 
-  const canonicalExerciseInsightName = useMemo(
-    () => resolveCanonicalExerciseName(exerciseNameInput, exerciseNames).toLowerCase(),
-    [exerciseNameInput, exerciseNames],
-  )
-  const exerciseInsightQueryNames = useMemo(() => {
-    if (!canonicalExerciseInsightName) return []
+  // The canonical name comes from the database so grouping rules live in one place.
+  const [debouncedExerciseName, setDebouncedExerciseName] = useState('')
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedExerciseName(exerciseNameInput.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [exerciseNameInput])
 
-    const names = new Set<string>()
-    for (const name of [...exerciseNames, ...(loggedExerciseNamesQuery.data ?? [])]) {
-      const canonicalName = resolveCanonicalExerciseName(name, exerciseNames)
-      if (canonicalName.toLowerCase() === canonicalExerciseInsightName) {
-        names.add(name)
-        names.add(canonicalName)
-      }
-    }
-
-    const canonicalName = resolveCanonicalExerciseName(exerciseNameInput, exerciseNames).trim()
-    if (canonicalName) names.add(canonicalName)
-    return [...names]
-  }, [canonicalExerciseInsightName, exerciseNameInput, exerciseNames, loggedExerciseNamesQuery.data])
+  const canonicalNameQuery = useQuery({
+    queryKey: ['canonical-exercise-name', debouncedExerciseName],
+    queryFn: () => getCanonicalExerciseName(debouncedExerciseName),
+    enabled: Boolean(user?.id) && isAddingExercise && debouncedExerciseName.length > 0,
+    staleTime: 5 * 60 * 1000,
+  })
+  const canonicalExerciseInsightName = canonicalNameQuery.data ?? ''
 
   const exerciseInsightsQuery = useQuery({
-    queryKey: ['exercise-insights', user?.id, exerciseInsightQueryNames],
-    queryFn: () => listExerciseInsightHistory(user!.id, exerciseInsightQueryNames),
+    queryKey: ['exercise-insights', user?.id, canonicalExerciseInsightName],
+    queryFn: () => listExerciseInsightHistory(user!.id, canonicalExerciseInsightName),
     enabled:
       Boolean(user?.id) &&
       activeTab === 'workout' &&
       isAddingExercise &&
-      exerciseInsightQueryNames.length > 0,
+      canonicalExerciseInsightName.length > 0,
   })
 
   const exerciseInsights = useMemo<ExerciseWeightInsights | null>(() => {
     const queryInsights = buildExerciseInsightsFromWorkouts(
       exerciseInsightsQuery.data ?? [],
       canonicalExerciseInsightName,
-      exerciseNames,
     )
     if (queryInsights?.suggestedToday || !historyWorkoutsQuery.data) return queryInsights
 
-    return buildExerciseInsightsFromWorkouts(
-      historyWorkoutsQuery.data,
-      canonicalExerciseInsightName,
-      exerciseNames,
-    )
-  }, [canonicalExerciseInsightName, exerciseInsightsQuery.data, exerciseNames, historyWorkoutsQuery.data])
+    return buildExerciseInsightsFromWorkouts(historyWorkoutsQuery.data, canonicalExerciseInsightName)
+  }, [canonicalExerciseInsightName, exerciseInsightsQuery.data, historyWorkoutsQuery.data])
 
   useEffect(() => {
     const metadataDisplay =
@@ -763,6 +743,11 @@ function App() {
           ?.find((item) => item.id === workoutId)
           ?.workout_exercises.map((exercise) => exercise.position) ?? []
       let nextPosition = Math.max(0, ...existingPositions) + 1
+      const originalNames = new Map(
+        historyWorkoutsQuery.data
+          ?.find((item) => item.id === workoutId)
+          ?.workout_exercises.map((exercise) => [exercise.id, exercise.exercise_name.trim()] as const) ?? [],
+      )
 
       for (const exercise of draft) {
         if (exercise.deleted) {
@@ -803,8 +788,10 @@ function App() {
             }
           }
         } else {
-          // Existing exercise - update it
-          await updateWorkoutExerciseName(exercise.id, cleanedName)
+          // Existing exercise - only touch the stored name if the user changed it
+          if (exercise.exercise_name.trim() !== originalNames.get(exercise.id)) {
+            await updateWorkoutExerciseName(exercise.id, cleanedName)
+          }
 
           for (const set of exercise.sets) {
             const reps = Number(set.reps)

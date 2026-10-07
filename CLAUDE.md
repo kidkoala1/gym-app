@@ -11,6 +11,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 There is no test suite. Requires `.env` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (read in [src/lib/supabase.ts](src/lib/supabase.ts)).
 
+Bump the `version` in `package.json` (and `package-lock.json`) with each batch of changes; it is shown in Settings via `__APP_VERSION__`.
+
+### Supabase CLI
+
+Use `npx supabase@latest ...` (not a project dependency). Windows PowerShell 5.1 has no `&&`.
+
+- `migration list` — compare local vs remote migrations
+- `db query --linked "select ..."` / `-f file.sql` — run SQL against the live DB (use a `do $$ ... raise exception ... $$` block at the end for a rolled-back dry run)
+- `db dump --schema public,private,progress -f live_schema.sql` — works without Docker (`db pull` needs Docker); `live_schema.sql` and `backup_*.sql` are gitignored
+- `db push` — applies pending migrations to the live DB; the user runs this themselves
+
 ## Architecture
 
 Single-page PWA gym tracker: React 19 + TypeScript + Vite, MUI (dark theme defined in [src/main.tsx](src/main.tsx)), TanStack Query, Supabase (auth + Postgres). No router is used in practice — navigation is a `TabView` state (`workout | progress | settings | history`) in [src/App.tsx](src/App.tsx).
@@ -18,10 +29,12 @@ Single-page PWA gym tracker: React 19 + TypeScript + Vite, MUI (dark theme defin
 - **[src/App.tsx](src/App.tsx)** (~1200 lines) is the orchestrator: it owns the active workout state, all React Query queries/mutations, profile and background-customization settings (persisted in `localStorage`), and passes data/handlers down as props to the tab components. Tab components are mostly presentational.
 - **`src/features/<area>/`** — `auth`, `profile`, `settings`, `workouts`. Each has `api.ts` (Supabase calls) and `components/`. All DB access goes through these `api.ts` files; components don't call Supabase directly.
 - **[src/types/db.ts](src/types/db.ts)** holds DB row types; [src/features/workouts/localTypes.ts](src/features/workouts/localTypes.ts) holds client-only UI/draft types.
-- **Schema** lives in [supabase/migrations/](supabase/migrations/) (RLS enabled on all tables; progress data is served via the `get_progress_series` RPC and an `aggregated_workout_progress` view, plus `search_public_profiles` for opt-in sharing/compare).
+- **Schema** lives in [supabase/migrations/](supabase/migrations/) (RLS enabled on all tables, one policy per command scoped to `authenticated`; `anon` has no table or RPC access). Progress data is served via the `get_progress_series` RPC, plus `search_public_profiles` for opt-in sharing/compare. Public-progress users' workout rows are readable by all signed-in users.
+- **Signup allowlist:** a `BEFORE INSERT` trigger on `auth.users` rejects emails not in `private.allowed_signup_emails`. Invite someone *before* they first sign in: `insert into private.allowed_signup_emails (email) values ('friend@gmail.com');` (lowercase).
 - `__APP_VERSION__` is injected by [vite.config.ts](vite.config.ts) from package.json's version (declared in [src/global.d.ts](src/global.d.ts)).
 
 ### Things to know
 
-- **Schema-drift fallbacks:** [src/features/workouts/api.ts](src/features/workouts/api.ts) tolerates a DB that hasn't had newer migrations applied (e.g. missing `workouts.title`, missing aggregation view/RPC) by catching specific Postgres/PostgREST errors and retrying with a reduced query. When adding a column/migration, follow this pattern or ensure the migration is applied first.
-- **Exercise name canonicalization:** progress/compare grouping depends on `resolveCanonicalExerciseName` in [src/features/workouts/defaultExercises.ts](src/features/workouts/defaultExercises.ts) (frontend alias rules), because the DB only stores the raw `exercise_name`. See [docs/technical-debt.md](docs/technical-debt.md) — the planned fix is a `canonical_exercise_name` column; do this before adding more Progress/Compare features.
+- **Apply migrations before deploying frontend code that depends on them.** [src/features/workouts/api.ts](src/features/workouts/api.ts) still has a `workouts.title` retry path for a DB without that column; newer columns (e.g. `canonical_exercise_name`) have no such fallback.
+- **Exercise names:** `exercise_name` is the display name; `canonical_exercise_name` (set by a DB trigger from `private.exercise_aliases`, never by the client) is what progress, compare and weight suggestions group on. `resolveCanonicalExerciseName` in [src/features/workouts/defaultExercises.ts](src/features/workouts/defaultExercises.ts) is only typing UX. Merge/split names with `select private.set_exercise_alias('alias', 'Canonical Name');`. See [docs/technical-debt.md](docs/technical-debt.md) for open items.
+- **Resuming workouts:** an unfinished workout (`finished_at is null`) is restored on load by `getUnfinishedWorkout`.
