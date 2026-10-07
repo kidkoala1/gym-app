@@ -15,3 +15,8 @@ build/
 *.log
 # Vite build output
 dist/
+
+# Supabase CLI local state
+supabase/.temp/
+live_schema.sql
+backup_*.sql
