@@ -1,32 +1,28 @@
 import type { ReactNode } from 'react'
-import {
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  type ButtonProps,
-} from '@mui/material'
+import { Dialog } from '@mui/material'
 
 type ConfirmDialogProps = {
   open: boolean
   title: string
-  children: ReactNode
+  children?: ReactNode
   cancelLabel?: string
   confirmLabel: string
-  /** Extra props for the confirm button (colour, disabled, custom styling). */
-  confirmButtonProps?: ButtonProps
+  /** Shows the confirm button in red, for actions that delete something. */
+  destructive?: boolean
+  confirmDisabled?: boolean
   onCancel: () => void
   onConfirm: () => void
 }
 
+/** An iOS-style alert: a short question with Cancel and a confirm button side by side. */
 export function ConfirmDialog({
   open,
   title,
   children,
   cancelLabel = 'Cancel',
   confirmLabel,
-  confirmButtonProps,
+  destructive = false,
+  confirmDisabled = false,
   onCancel,
   onConfirm,
 }: ConfirmDialogProps) {
@@ -34,27 +30,25 @@ export function ConfirmDialog({
     <Dialog
       open={open}
       onClose={onCancel}
-      fullWidth
-      maxWidth="xs"
-      PaperProps={{
-        sx: {
-          border: '1px solid rgba(179, 149, 255, 0.4)',
-          borderRadius: 2,
-          background: 'linear-gradient(180deg, rgba(29, 21, 58, 0.96), rgba(20, 15, 43, 0.96))',
-          color: '#eef0ff',
-        },
-      }}
+      slotProps={{ paper: { className: 'alert', 'aria-labelledby': 'confirm-title' } }}
     >
-      <DialogTitle>{title}</DialogTitle>
-      <DialogContent>{children}</DialogContent>
-      <DialogActions sx={{ px: 2, pb: 2 }}>
-        <Button variant="outlined" onClick={onCancel}>
+      <div className="a-body">
+        <h2 id="confirm-title">{title}</h2>
+        {children ? <div className="a-msg">{children}</div> : null}
+      </div>
+      <div className="a-actions">
+        <button type="button" className="bold" onClick={onCancel}>
           {cancelLabel}
-        </Button>
-        <Button variant="contained" onClick={onConfirm} {...confirmButtonProps}>
+        </button>
+        <button
+          type="button"
+          className={destructive ? 'destructive' : undefined}
+          onClick={onConfirm}
+          disabled={confirmDisabled}
+        >
           {confirmLabel}
-        </Button>
-      </DialogActions>
+        </button>
+      </div>
     </Dialog>
   )
 }

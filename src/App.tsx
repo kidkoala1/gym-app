@@ -1,35 +1,26 @@
-import { lazy, Suspense, useState } from 'react'
-import {
-  Alert,
-  Box,
-  CircularProgress,
-  Menu,
-  MenuItem,
-  Paper,
-  Snackbar,
-  Stack,
-  Tab,
-  Tabs,
-  Typography,
-} from '@mui/material'
+import { lazy, Suspense, useMemo, useState } from 'react'
+import { CircularProgress, CssBaseline, Snackbar, ThemeProvider } from '@mui/material'
 import { useQuery } from '@tanstack/react-query'
+import { BottomNav, type TabView } from './components/BottomNav'
 import { ConfirmDialog } from './components/ConfirmDialog'
+import { Icon } from './components/Icon'
 import { AuthScreen } from './features/auth/components/AuthScreen'
 import { useAuthSession } from './features/auth/useAuthSession'
 import { useProfileForm } from './features/profile/useProfileForm'
 import { useBackgroundSettings } from './features/settings/useBackgroundSettings'
+import { usePreferences } from './features/settings/usePreferences'
 import { listLoggedExerciseNames } from './features/workouts/api'
+import { RestClock } from './features/workouts/components/RestClock'
 import { WorkoutTab } from './features/workouts/components/WorkoutTab'
-import { WORKOUT_TITLE_SUGGESTIONS } from './features/workouts/constants'
-import { DEFAULT_EXERCISE_NAMES } from './features/workouts/defaultExercises'
+import { recentWorkoutsQuery } from './features/workouts/exerciseQueries'
 import type { SettingsView } from './features/workouts/localTypes'
 import { useActiveWorkout } from './features/workouts/useActiveWorkout'
 import { useExerciseLibrary } from './features/workouts/useExerciseLibrary'
 import { useWorkoutHistory } from './features/workouts/useWorkoutHistory'
 import { getErrorMessage } from './lib/errors'
-import { fieldSx } from './lib/formStyles'
 import { supabase } from './lib/supabase'
 import { useSnackbar } from './lib/useSnackbar'
+import { buildTheme } from './theme'
 import './App.css'
 
 // The Workout tab is what opens first, so it loads with the app. The others load on first visit.
@@ -43,16 +34,19 @@ const SettingsTab = lazy(() =>
   import('./features/settings/components/SettingsTab').then((m) => ({ default: m.SettingsTab })),
 )
 
-type TabView = 'workout' | 'progress' | 'settings' | 'history'
+function App() {
+  const preferences = usePreferences()
+  const theme = useMemo(() => buildTheme(preferences.accentColor), [preferences.accentColor])
 
-const destructiveButtonSx = {
-  bgcolor: '#d32f2f',
-  backgroundImage: 'none',
-  '&:hover': { bgcolor: '#b71c1c', backgroundImage: 'none' },
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <AppContent preferences={preferences} />
+    </ThemeProvider>
+  )
 }
 
-function App() {
-  const appVersion = __APP_VERSION__
+function AppContent({ preferences }: { preferences: ReturnType<typeof usePreferences> }) {
   const { session, user, isLoading: authLoading } = useAuthSession()
   const { snackbar, showError, showSuccess, closeSnackbar } = useSnackbar()
 
@@ -65,11 +59,9 @@ function App() {
   const library = useExerciseLibrary(user, showError)
   const workout = useActiveWorkout({
     user,
-    isWorkoutTabActive: activeTab === 'workout',
     exerciseNames: library.exerciseNames,
     createExerciseAsync: library.createExerciseAsync,
     showError,
-    showSuccess,
   })
   const history = useWorkoutHistory({
     user,
@@ -78,8 +70,11 @@ function App() {
     createExerciseAsync: library.createExerciseAsync,
     showError,
     showSuccess,
+    onWorkoutSaved: (workoutId) => void workout.reloadFromServer(workoutId),
+    onWorkoutDeleted: workout.forgetWorkout,
   })
 
+  const recentWorkouts = useQuery({ ...recentWorkoutsQuery(user?.id), enabled: Boolean(user?.id) && activeTab === 'workout' })
   const loggedExerciseNamesQuery = useQuery({
     queryKey: ['logged-exercise-names', user?.id],
     queryFn: () => listLoggedExerciseNames(),
@@ -89,6 +84,17 @@ function App() {
     ? getErrorMessage(loggedExerciseNamesQuery.error, 'Could not load logged exercises.')
     : null
 
+  function changeTab(tab: TabView) {
+    setActiveTab(tab)
+    if (tab !== 'settings') setSettingsView('menu')
+    window.scrollTo(0, 0)
+  }
+
+  function openPastWorkout(workoutId: string) {
+    changeTab('history')
+    history.openDetail(workoutId)
+  }
+
   async function handleGoogleSignIn() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -97,255 +103,145 @@ function App() {
     if (error) showError(error.message)
   }
 
-  async function handleSignOut() {
+  async function confirmSignOut() {
+    setSignOutConfirmOpen(false)
     const { error } = await supabase.auth.signOut()
     if (error) {
       showError(error.message)
       return
     }
-
     workout.resetActiveWorkout()
     profile.resetProfileForm()
+    history.closeDetail()
+    changeTab('workout')
     showSuccess('Signed out.')
   }
 
-  async function confirmSignOut() {
-    setSignOutConfirmOpen(false)
-    await handleSignOut()
-  }
+  const toast = (
+    <Snackbar
+      open={snackbar.open}
+      autoHideDuration={3000}
+      onClose={closeSnackbar}
+      anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      sx={{ top: 'calc(env(safe-area-inset-top, 0px) + 10px) !important' }}
+    >
+      <div className={snackbar.severity === 'error' ? 'toast error' : 'toast'} role="status" onClick={closeSnackbar}>
+        <Icon name={snackbar.severity === 'error' ? 'alert' : 'check'} />
+        <span>{snackbar.message}</span>
+      </div>
+    </Snackbar>
+  )
 
   if (authLoading) {
     return (
-      <Box className="app-shell" sx={{ display: 'grid', placeItems: 'center', minHeight: '90vh' }}>
-        <CircularProgress />
-      </Box>
+      <div className="center-screen">
+        <CircularProgress size={28} aria-label="Loading" />
+      </div>
     )
   }
 
   if (!session || !user) {
-    return <AuthScreen onGoogleSignIn={handleGoogleSignIn} />
+    return (
+      <>
+        <AuthScreen onGoogleSignIn={handleGoogleSignIn} />
+        {toast}
+      </>
+    )
   }
 
+  const tiledBackground = background.kind === 'kees'
+
   return (
-    <Box
-      className="app-shell"
-      sx={{
-        backgroundImage: background.backgroundImage,
-        backgroundSize: 'auto',
-        backgroundPosition: 'center',
-        backgroundAttachment: 'fixed',
-        backgroundRepeat: 'repeat',
-      }}
-    >
-      <Paper className="panel" elevation={0}>
-        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-          <Typography variant="h5" sx={{ fontSize: '1.25rem', fontWeight: 700 }}>
-            Gym Workout Tracker
-          </Typography>
-        </Stack>
+    <>
+      {background.backgroundImage !== 'none' ? (
+        <div
+          className="bg-layer"
+          style={{
+            backgroundImage: background.backgroundImage,
+            backgroundSize: tiledBackground ? 'auto' : 'cover',
+            backgroundRepeat: tiledBackground ? 'repeat' : 'no-repeat',
+          }}
+        />
+      ) : null}
 
-        <Tabs
-          value={activeTab}
-          onChange={(_, value: TabView) => {
-            setActiveTab(value)
-            if (value !== 'settings') setSettingsView('menu')
-          }}
-          variant="fullWidth"
-          textColor="inherit"
-          indicatorColor="secondary"
-          sx={{
-            minHeight: 44,
-            '& .MuiTab-root': {
-              minHeight: 44,
-              minWidth: 0,
-              px: 0.5,
-              fontWeight: 600,
-              fontSize: { xs: '0.78rem', sm: '0.9rem' },
-            },
-          }}
+      <main className="app">
+        <Suspense
+          fallback={
+            <div className="spinner-row">
+              <CircularProgress size={26} aria-label="Loading" />
+            </div>
+          }
         >
-          <Tab value="workout" label="Workout" />
-          <Tab value="progress" label="Progress" />
-          <Tab value="history" label="History" />
-          <Tab value="settings" label="Settings" />
-        </Tabs>
-      </Paper>
+          {activeTab === 'workout' ? (
+            <WorkoutTab
+              userId={user.id}
+              workout={workout.workout}
+              resumePending={workout.resumePending}
+              syncError={workout.syncError}
+              recentWorkouts={recentWorkouts.data ?? []}
+              exerciseNames={library.exerciseNames}
+              startPending={workout.startWorkoutPending}
+              finishPending={workout.finishWorkoutPending}
+              deletePending={workout.deleteWorkoutPending}
+              onStart={(title) => void workout.startWorkout(title)}
+              onRename={(title) => void workout.renameWorkout(title)}
+              onAddExercise={(name) => void workout.addExercise(name)}
+              onSwapExercise={workout.swapExercise}
+              onRemoveExercise={workout.removeExercise}
+              onUpdateSet={workout.updateSet}
+              onDeleteSet={workout.deleteSet}
+              onSaveNow={workout.saveNow}
+              onFinish={workout.finishWorkout}
+              onDelete={workout.deleteActiveWorkout}
+              onOpenPastWorkout={openPastWorkout}
+            />
+          ) : activeTab === 'progress' ? (
+            <ProgressTab
+              exerciseNames={loggedExerciseNamesQuery.data ?? []}
+              exerciseNamesLoading={loggedExerciseNamesQuery.isLoading}
+              exerciseNamesErrorMessage={loggedExerciseNamesErrorMessage}
+              userId={user.id}
+            />
+          ) : activeTab === 'history' ? (
+            <HistoryTab history={history} exerciseNames={library.exerciseNames} />
+          ) : (
+            <SettingsTab
+              view={settingsView}
+              onViewChange={(view) => {
+                setSettingsView(view)
+                window.scrollTo(0, 0)
+              }}
+              appVersion={__APP_VERSION__}
+              user={user}
+              profile={profile}
+              library={library}
+              background={background}
+              preferences={preferences}
+              onRequestSignOut={() => setSignOutConfirmOpen(true)}
+            />
+          )}
+        </Suspense>
+      </main>
 
-      <Suspense
-        fallback={
-          <Box sx={{ display: 'grid', placeItems: 'center', py: 4 }}>
-            <CircularProgress size={26} />
-          </Box>
-        }
-      >
-        {activeTab === 'workout' ? (
-          <WorkoutTab
-            activeWorkout={workout.activeWorkout}
-            isAddingExercise={workout.isAddingExercise}
-            exerciseNameInput={workout.exerciseNameInput}
-            setDrafts={workout.setDrafts}
-            exerciseNames={library.exerciseNames}
-            exercisesLoading={library.exercisesLoading}
-            exerciseInsightsLoading={workout.exerciseInsightsLoading}
-            exerciseInsights={workout.exerciseInsights}
-            fieldSx={fieldSx}
-            startWorkoutPending={workout.startWorkoutPending}
-            finishWorkoutPending={workout.finishWorkoutPending}
-            deleteWorkoutPending={workout.cancelWorkoutPending}
-            workoutTitleInput={workout.workoutTitleInput}
-            workoutTitleSuggestions={WORKOUT_TITLE_SUGGESTIONS}
-            onStartWorkout={workout.startWorkout}
-            onFinishWorkout={workout.finishWorkout}
-            onOpenCancelWorkoutConfirm={() => workout.setCancelWorkoutConfirmOpen(true)}
-            onOpenAddExercise={workout.openAddExercise}
-            onFinishExercise={workout.finishExercise}
-            onCancelAddExercise={workout.cancelAddExercise}
-            onWorkoutTitleInputChange={workout.handleWorkoutTitleInputChange}
-            onSelectWorkoutTitleSuggestion={workout.handleWorkoutTitleInputChange}
-            onExerciseNameInputChange={workout.setExerciseNameInput}
-            onExerciseNameInputBlur={workout.normalizeExerciseNameInput}
-            onUpdateSetDraft={workout.updateSetDraft}
-          />
-        ) : activeTab === 'progress' ? (
-          <ProgressTab
-            exerciseNames={loggedExerciseNamesQuery.data ?? []}
-            exerciseNamesLoading={loggedExerciseNamesQuery.isLoading}
-            exerciseNamesErrorMessage={loggedExerciseNamesErrorMessage}
-            userId={user.id}
-          />
-        ) : activeTab === 'history' ? (
-          <HistoryTab
-            isLoading={history.isLoading}
-            workouts={history.workouts}
-            hasMore={history.hasMore}
-            isLoadingMore={history.isLoadingMore}
-            onLoadMore={history.loadMore}
-            errorMessage={history.errorMessage}
-            expandedHistory={history.expandedHistory}
-            editingWorkoutId={history.editingWorkoutId}
-            historyEdits={history.historyEdits}
-            exerciseNames={library.exerciseNames}
-            editingExerciseNameInput={history.editingExerciseNameInput}
-            editingSetDrafts={history.editingSetDrafts}
-            fieldSx={fieldSx}
-            onToggleExpanded={history.toggleExpanded}
-            onOpenWorkoutMenu={history.openWorkoutMenu}
-            onUpdateHistoryExerciseName={history.updateHistoryExerciseName}
-            onMarkHistoryExerciseDeleted={history.markHistoryExerciseDeleted}
-            onUpdateHistorySetField={history.updateHistorySetField}
-            onSaveWorkoutEdit={history.saveWorkoutEdit}
-            onCancelWorkoutEdit={history.cancelWorkoutEdit}
-            onAddExerciseToHistoryEdit={history.addExerciseToHistoryEdit}
-            onCancelAddingExerciseToHistory={history.cancelAddingExerciseToHistory}
-            onEditingExerciseNameInputChange={history.setEditingExerciseNameInput}
-            onEditingExerciseNameInputBlur={history.normalizeEditingExerciseName}
-            onUpdateEditingSetDraft={history.updateEditingSetDraft}
-          />
-        ) : (
-          <SettingsTab
-            settingsView={settingsView}
-            appVersion={appVersion}
-            defaultExerciseNames={DEFAULT_EXERCISE_NAMES}
-            exerciseLibrary={library.exerciseLibrary}
-            profileDisplayName={profile.profileDisplayName}
-            profileAvatarUrl={profile.profileAvatarUrl}
-            isProgressPublic={profile.isProgressPublic}
-            backgroundImageUrl={background.backgroundImageUrl}
-            useCustomBackground={background.useCustomBackground}
-            useMonkeyBackground={background.useMonkeyBackground}
-            uploadedBackgroundData={background.uploadedBackgroundData}
-            useUploadedBackground={background.useUploadedBackground}
-            fieldSx={fieldSx}
-            createExercisePending={library.createExercisePending}
-            deleteExercisePending={library.deleteExercisePending}
-            upsertProfilePending={profile.isSavingProfile}
-            newExerciseInput={library.newExerciseInput}
-            user={user}
-            onSettingsViewChange={setSettingsView}
-            onNewExerciseInputChange={library.setNewExerciseInput}
-            onAddExerciseToLibrary={library.addExerciseToLibrary}
-            onExerciseDeleteRequest={library.setDeleteTarget}
-            onProfileDisplayNameChange={profile.setProfileDisplayName}
-            onProfileAvatarUrlChange={profile.setProfileAvatarUrl}
-            onIsProgressPublicChange={profile.setIsProgressPublic}
-            onBackgroundImageUrlChange={background.handleBackgroundImageUrlChange}
-            onUseCustomBackgroundChange={background.handleUseCustomBackgroundChange}
-            onUseMonkeyBackgroundChange={background.handleUseMonkeyBackgroundChange}
-            onUploadBackgroundImage={background.handleUploadBackgroundImage}
-            onUseUploadedBackgroundChange={background.handleUseUploadedBackgroundChange}
-            onClearUploadedBackground={background.handleClearUploadedBackground}
-            onSaveProfile={profile.saveProfile}
-            onRequestSignOut={() => setSignOutConfirmOpen(true)}
-          />
-        )}
-      </Suspense>
+      {preferences.restClockEnabled && workout.workout && workout.restSince ? (
+        <RestClock since={workout.restSince} onDismiss={workout.dismissRestClock} />
+      ) : null}
 
-      <Menu
-        anchorEl={history.workoutMenuAnchor}
-        open={Boolean(history.workoutMenuAnchor)}
-        onClose={history.closeWorkoutMenu}
-      >
-        <MenuItem
-          onClick={() => {
-            if (history.selectedWorkoutId) history.beginWorkoutEdit(history.selectedWorkoutId)
-          }}
-        >
-          Edit workout
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            if (history.selectedWorkoutId) void history.removeWorkoutFromHistory(history.selectedWorkoutId)
-          }}
-          sx={{ color: '#ff8ea6' }}
-        >
-          Delete workout
-        </MenuItem>
-      </Menu>
+      <BottomNav value={activeTab} onChange={changeTab} workoutInProgress={workout.workout !== null} />
 
       <ConfirmDialog
         open={signOutConfirmOpen}
         title="Sign out?"
         confirmLabel="Sign out"
-        confirmButtonProps={{ sx: destructiveButtonSx }}
+        destructive
         onCancel={() => setSignOutConfirmOpen(false)}
-        onConfirm={confirmSignOut}
+        onConfirm={() => void confirmSignOut()}
       >
-        <Typography variant="body2">You will need to sign in again to continue.</Typography>
+        You’ll need to sign in with Google again.
       </ConfirmDialog>
 
-      <ConfirmDialog
-        open={Boolean(library.deleteTarget)}
-        title="Delete exercise?"
-        confirmLabel="Delete"
-        confirmButtonProps={{ color: 'error', disabled: library.deleteExercisePending }}
-        onCancel={() => library.setDeleteTarget(null)}
-        onConfirm={library.confirmDeleteExercise}
-      >
-        <Typography variant="body2">
-          This will remove <strong>{library.deleteTarget?.name}</strong> from your exercise list.
-        </Typography>
-      </ConfirmDialog>
-
-      <ConfirmDialog
-        open={workout.cancelWorkoutConfirmOpen}
-        title="Cancel workout?"
-        cancelLabel="Keep workout"
-        confirmLabel="Cancel workout"
-        confirmButtonProps={{ color: 'error', disabled: workout.cancelWorkoutPending }}
-        onCancel={() => workout.setCancelWorkoutConfirmOpen(false)}
-        onConfirm={workout.cancelWorkout}
-      >
-        <Typography variant="body2">
-          This will delete the current in-progress workout and all exercises added to it.
-        </Typography>
-      </ConfirmDialog>
-
-      <Snackbar open={snackbar.open} autoHideDuration={3500} onClose={closeSnackbar}>
-        <Alert severity={snackbar.severity} variant="filled" onClose={closeSnackbar}>
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
-    </Box>
+      {toast}
+    </>
   )
 }
 

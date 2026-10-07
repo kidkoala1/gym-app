@@ -1,41 +1,6 @@
-export type SetDraft = {
-  reps: string
-  weight: string
-}
+// Client-only UI types (database rows are in src/types/db.ts; workout drafts in workoutDraft.ts).
 
-export type CompletedSet = {
-  reps: number
-  weightKg: number
-}
-
-export type LocalWorkoutExercise = {
-  name: string
-  sets: CompletedSet[]
-}
-
-export type ActiveWorkout = {
-  id: string
-  startedAt: string
-  title: string | null
-  exercises: LocalWorkoutExercise[]
-}
-
-export type EditableSet = {
-  id: string
-  set_number: number
-  reps: string
-  weight_kg: string
-}
-
-export type EditableHistoryExercise = {
-  id: string
-  exercise_name: string
-  sets: EditableSet[]
-  deleted?: boolean
-  isNew?: boolean
-}
-
-export type SettingsView = 'menu' | 'exercise-list' | 'profile' | 'appearance'
+export type SettingsView = 'menu' | 'exercise-list' | 'profile' | 'appearance' | 'rest-clock'
 
 export type ExerciseInsightSet = {
   reps: number

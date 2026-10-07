@@ -91,10 +91,12 @@ export async function deleteWorkout(workoutId: string, userId: string): Promise<
   if (error) throwSupabaseError(error)
 }
 
+/** A set to update (id + values), append (values only) or delete (id + deleted). */
 export type WorkoutEditSet = {
   id?: string
-  reps: number
-  weight_kg: number
+  deleted?: boolean
+  reps?: number
+  weight_kg?: number
 }
 
 export type WorkoutEditExercise = {
@@ -104,16 +106,25 @@ export type WorkoutEditExercise = {
   sets?: WorkoutEditSet[]
 }
 
+/** One element per requested exercise: its id and the id of each requested set (null when deleted). */
+export type WorkoutEditResult = Array<{ id: string; set_ids?: Array<string | null>; deleted?: boolean }>
+
 /**
- * Applies a whole workout edit in one database transaction (see save_workout_edit).
- * Exercises without an id are appended after the workout's last position.
+ * Applies a workout edit in one database transaction (see save_workout_edit). Exercises without an
+ * id are appended after the workout's last position; sets without an id after the exercise's last set.
  */
-export async function saveWorkoutEdit(workoutId: string, exercises: WorkoutEditExercise[]): Promise<void> {
-  const { error } = await supabase.rpc('save_workout_edit', {
+export async function saveWorkoutEdit(workoutId: string, exercises: WorkoutEditExercise[]): Promise<WorkoutEditResult> {
+  const { data, error } = await supabase.rpc('save_workout_edit', {
     p_workout_id: workoutId,
     p_exercises: exercises,
   })
 
+  if (error) throwSupabaseError(error)
+  return (data ?? []) as WorkoutEditResult
+}
+
+export async function updateWorkoutTitle(workoutId: string, userId: string, title: string | null): Promise<void> {
+  const { error } = await supabase.from('workouts').update({ title }).eq('id', workoutId).eq('user_id', userId)
   if (error) throwSupabaseError(error)
 }
 
@@ -214,9 +225,11 @@ export type UnfinishedWorkout = {
     id: string
     exercise_name: string
     position: number
-    workout_sets: Array<{ set_number: number; reps: number; weight_kg: number }>
+    workout_sets: Array<{ id: string; set_number: number; reps: number; weight_kg: number }>
   }>
 }
+
+const WORKOUT_WITH_SETS = 'id,started_at,title,workout_exercises(id,exercise_name,position,workout_sets(id,set_number,reps,weight_kg))'
 
 // Only a recently started workout counts as "in progress"; older unfinished ones are abandoned sessions.
 const RESUME_WINDOW_HOURS = 12
@@ -224,12 +237,25 @@ const RESUME_WINDOW_HOURS = 12
 export async function getUnfinishedWorkout(userId: string): Promise<UnfinishedWorkout | null> {
   const { data, error } = await supabase
     .from('workouts')
-    .select('id,started_at,title,workout_exercises(id,exercise_name,position,workout_sets(set_number,reps,weight_kg))')
+    .select(WORKOUT_WITH_SETS)
     .eq('user_id', userId)
     .is('finished_at', null)
     .gte('started_at', new Date(Date.now() - RESUME_WINDOW_HOURS * 60 * 60 * 1000).toISOString())
     .order('started_at', { ascending: false })
     .limit(1)
+    .maybeSingle()
+
+  if (error) throwSupabaseError(error)
+  return (data as UnfinishedWorkout | null) ?? null
+}
+
+/** One workout with its exercises and sets (used to reload the live workout after it was edited in History). */
+export async function getWorkoutWithSets(workoutId: string, userId: string): Promise<UnfinishedWorkout | null> {
+  const { data, error } = await supabase
+    .from('workouts')
+    .select(WORKOUT_WITH_SETS)
+    .eq('id', workoutId)
+    .eq('user_id', userId)
     .maybeSingle()
 
   if (error) throwSupabaseError(error)

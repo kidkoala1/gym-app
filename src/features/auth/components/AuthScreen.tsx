@@ -1,4 +1,4 @@
-import { Box, Button, Paper, Stack, Typography } from '@mui/material'
+import { Icon } from '../../../components/Icon'
 
 type AuthScreenProps = {
   onGoogleSignIn: () => void
@@ -6,20 +6,20 @@ type AuthScreenProps = {
 
 export function AuthScreen({ onGoogleSignIn }: AuthScreenProps) {
   return (
-    <Box className="app-shell" sx={{ display: 'grid', placeItems: 'center', minHeight: '90vh' }}>
-      <Paper className="panel" elevation={0} sx={{ width: '100%', maxWidth: 460 }}>
-        <Stack spacing={1.2}>
-          <Typography variant="h5" sx={{ fontSize: '1.25rem', fontWeight: 700 }}>
-            Gym Workout Tracker
-          </Typography>
-          <Typography color="text.secondary">
-            Sign in to sync your workouts and exercise settings.
-          </Typography>
-          <Button variant="contained" onClick={onGoogleSignIn}>
-            Sign in with Google
-          </Button>
-        </Stack>
-      </Paper>
-    </Box>
+    <main className="auth">
+      <div className="auth-inner">
+        <div className="app-icon">
+          <Icon name="dumbbell" />
+        </div>
+        <h1>Gym Tracker</h1>
+        <p className="lead">Log every set as you go and watch your lifts climb.</p>
+      </div>
+      <div className="auth-inner">
+        <button type="button" className="btn btn-light" onClick={onGoogleSignIn}>
+          Continue with Google
+        </button>
+        <p className="footnote center">Invite only. Your Gmail address needs to be on the list before you sign in.</p>
+      </div>
+    </main>
   )
 }

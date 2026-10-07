@@ -42,8 +42,8 @@ export default defineConfig({
     short_name: 'Gym',
     start_url: '/',
     display: 'standalone',
-    background_color: '#111111',
-    theme_color: '#111111',
+    background_color: '#000000',
+    theme_color: '#000000',
     icons: [
       {
         src: '/icon-192.png',

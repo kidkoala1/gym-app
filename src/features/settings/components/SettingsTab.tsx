@@ -1,407 +1,387 @@
-import { Avatar, Button, FormControlLabel, List, ListItem, Paper, Stack, Switch, TextField, Typography } from '@mui/material'
+import type { ReactNode } from 'react'
 import type { User } from '@supabase/supabase-js'
-import type { ExerciseRow } from '../../../types/db'
+import { ConfirmDialog } from '../../../components/ConfirmDialog'
+import { Switch } from '../../../components/Controls'
+import { Icon, type IconName } from '../../../components/Icon'
+import { SwipeRow } from '../../../components/SwipeRow'
+import type { useProfileForm } from '../../profile/useProfileForm'
+import { DEFAULT_EXERCISE_NAMES } from '../../workouts/defaultExercises'
 import type { SettingsView } from '../../workouts/localTypes'
+import type { useExerciseLibrary } from '../../workouts/useExerciseLibrary'
+import type { BackgroundKind, useBackgroundSettings } from '../useBackgroundSettings'
+import { ACCENT_PRESETS, CUSTOM_ACCENT_ID, DEFAULT_ACCENT_ID, type usePreferences } from '../usePreferences'
 
 type SettingsTabProps = {
-  settingsView: SettingsView
+  view: SettingsView
+  onViewChange: (view: SettingsView) => void
   appVersion: string
-  defaultExerciseNames: readonly string[]
-  exerciseLibrary: ExerciseRow[]
-  profileDisplayName: string
-  profileAvatarUrl: string
-  isProgressPublic: boolean
-  backgroundImageUrl: string
-  useCustomBackground: boolean
-  useMonkeyBackground: boolean
-  uploadedBackgroundData: string
-  useUploadedBackground: boolean
-  fieldSx: object
-  createExercisePending: boolean
-  deleteExercisePending: boolean
-  upsertProfilePending: boolean
-  newExerciseInput: string
   user: User
-  onSettingsViewChange: (view: SettingsView) => void
-  onNewExerciseInputChange: (value: string) => void
-  onAddExerciseToLibrary: () => void
-  onExerciseDeleteRequest: (exercise: ExerciseRow) => void
-  onProfileDisplayNameChange: (value: string) => void
-  onProfileAvatarUrlChange: (value: string) => void
-  onIsProgressPublicChange: (value: boolean) => void
-  onBackgroundImageUrlChange: (url: string) => void
-  onUseCustomBackgroundChange: (enabled: boolean) => void
-  onUseMonkeyBackgroundChange: (enabled: boolean) => void
-  onUploadBackgroundImage: (file: File) => void
-  onUseUploadedBackgroundChange: (enabled: boolean) => void
-  onClearUploadedBackground: () => void
-  onSaveProfile: () => void
+  profile: ReturnType<typeof useProfileForm>
+  library: ReturnType<typeof useExerciseLibrary>
+  background: ReturnType<typeof useBackgroundSettings>
+  preferences: ReturnType<typeof usePreferences>
   onRequestSignOut: () => void
 }
 
-export function SettingsTab({
-  settingsView,
-  appVersion,
-  defaultExerciseNames,
-  exerciseLibrary,
-  profileDisplayName,
-  profileAvatarUrl,
-  isProgressPublic,
-  backgroundImageUrl,
-  useCustomBackground,
-  useMonkeyBackground,
-  uploadedBackgroundData,
-  useUploadedBackground,
-  fieldSx,
-  createExercisePending,
-  deleteExercisePending,
-  upsertProfilePending,
-  newExerciseInput,
-  user,
-  onSettingsViewChange,
-  onNewExerciseInputChange,
-  onAddExerciseToLibrary,
-  onExerciseDeleteRequest,
-  onProfileDisplayNameChange,
-  onProfileAvatarUrlChange,
-  onIsProgressPublicChange,
-  onBackgroundImageUrlChange,
-  onUseCustomBackgroundChange,
-  onUseMonkeyBackgroundChange,
-  onUploadBackgroundImage,
-  onUseUploadedBackgroundChange,
-  onClearUploadedBackground,
-  onSaveProfile,
-  onRequestSignOut,
-}: SettingsTabProps) {
+function Avatar({ name, url, size }: { name: string; url: string; size: number }) {
+  const showImage = /^https:\/\//i.test(url.trim())
   return (
-    <Paper className="panel" elevation={0}>
-      <Stack spacing={1.25}>
-        {settingsView === 'menu' ? (
-          <Stack spacing={1.25}>
-            <Button
-              variant="outlined"
-              onClick={() => onSettingsViewChange('profile')}
-              sx={{ justifyContent: 'space-between' }}
-            >
-              Profile
-            </Button>
-            <Button
-              variant="outlined"
-              onClick={() => onSettingsViewChange('appearance')}
-              sx={{ justifyContent: 'space-between' }}
-            >
-              Background
-            </Button>
-            <Button
-              variant="outlined"
-              onClick={() => onSettingsViewChange('exercise-list')}
-              sx={{ justifyContent: 'space-between' }}
-            >
-              Exercise list
-            </Button>
-          </Stack>
-        ) : settingsView === 'exercise-list' ? (
-          <Stack spacing={1.25}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Typography variant="h6" sx={{ fontSize: '1rem' }}>
-                Exercise List
-              </Typography>
-              <Button variant="outlined" size="small" onClick={() => onSettingsViewChange('menu')}>
-                Back
-              </Button>
-            </Stack>
+    <div className="avatar" style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}>
+      {showImage ? <img src={url.trim()} alt="" /> : (name.trim() || '?').charAt(0).toUpperCase()}
+    </div>
+  )
+}
 
-            <Stack direction="row" spacing={1}>
-              <TextField
-                fullWidth
-                placeholder="Add custom exercise"
-                value={newExerciseInput}
-                onChange={(event) => onNewExerciseInputChange(event.target.value)}
-                sx={fieldSx}
+function SubPage({ title, onBack, children }: { title: string; onBack: () => void; children: ReactNode }) {
+  return (
+    <>
+      <div className="navbar">
+        <button type="button" className="back" onClick={onBack}>
+          <Icon name="chevronLeft" />
+          Settings
+        </button>
+      </div>
+      <header className="lt sub-lt">
+        <h1>{title}</h1>
+      </header>
+      <div className="stack">{children}</div>
+    </>
+  )
+}
+
+function MenuRow({ icon, color, label, value, onClick }: { icon: IconName; color: string; label: string; value: string; onClick: () => void }) {
+  return (
+    <button type="button" className="row" onClick={onClick}>
+      <span className="icon-tile" style={{ background: `var(${color})` }}>
+        <Icon name={icon} />
+      </span>
+      <span className="grow">{label}</span>
+      <span className="value">{value}</span>
+      <Icon name="chevronRight" className="chev" />
+    </button>
+  )
+}
+
+export function SettingsTab(props: SettingsTabProps) {
+  const { view, onViewChange } = props
+  const back = () => onViewChange('menu')
+
+  if (view === 'profile') return <ProfilePage {...props} onBack={back} />
+  if (view === 'appearance') return <AppearancePage {...props} onBack={back} />
+  if (view === 'exercise-list') return <ExerciseListPage {...props} onBack={back} />
+  if (view === 'rest-clock') return <RestClockPage {...props} onBack={back} />
+
+  const { profile, library, background, preferences, appVersion, onRequestSignOut } = props
+  const backgroundLabel: Record<BackgroundKind, string> = { none: 'Plain', kees: 'Kees modus', url: 'Link', upload: 'Photo' }
+
+  return (
+    <>
+      <header className="lt">
+        <h1>Settings</h1>
+      </header>
+      <div className="stack">
+        <div className="group">
+          <button type="button" className="row profile-row" onClick={() => onViewChange('profile')}>
+            <Avatar name={profile.profileDisplayName} url={profile.profileAvatarUrl} size={56} />
+            <div className="grow">
+              <div className="p-name ellipsis">{profile.profileDisplayName || 'Your profile'}</div>
+              <div className="muted sm">{profile.isProgressPublic ? 'Progress visible to members' : 'Progress private'}</div>
+            </div>
+            <Icon name="chevronRight" className="chev" />
+          </button>
+        </div>
+
+        <div className="group icons">
+          <MenuRow
+            icon="palette"
+            color="--tile-indigo"
+            label="Appearance"
+            value={`${preferences.accentName} · ${backgroundLabel[background.kind]}`}
+            onClick={() => onViewChange('appearance')}
+          />
+          <MenuRow
+            icon="list"
+            color="--tile-orange"
+            label="Exercise list"
+            value={`${library.exerciseLibrary.length} custom`}
+            onClick={() => onViewChange('exercise-list')}
+          />
+          <MenuRow
+            icon="timer"
+            color="--tile-green"
+            label="Rest clock"
+            value={preferences.restClockEnabled ? 'On' : 'Off'}
+            onClick={() => onViewChange('rest-clock')}
+          />
+        </div>
+
+        <div className="group">
+          <button type="button" className="row center danger" onClick={onRequestSignOut}>
+            Sign out
+          </button>
+        </div>
+        <p className="footnote center">Gym Tracker {appVersion}</p>
+      </div>
+    </>
+  )
+}
+
+function ProfilePage({ profile, user, onBack }: SettingsTabProps & { onBack: () => void }) {
+  const provider = (user.app_metadata?.provider as string | undefined) ?? 'email'
+  const providerName = provider.charAt(0).toUpperCase() + provider.slice(1)
+  const memberSince = new Date(user.created_at).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+
+  return (
+    <SubPage title="Profile" onBack={onBack}>
+      <div className="profile-hero">
+        <Avatar name={profile.profileDisplayName} url={profile.profileAvatarUrl} size={88} />
+      </div>
+      <div className="group">
+        <label className="row form-row" htmlFor="profile-name">
+          <span className="lbl">Name</span>
+          <input
+            id="profile-name"
+            className="inline"
+            autoComplete="name"
+            value={profile.profileDisplayName}
+            onChange={(e) => profile.setProfileDisplayName(e.target.value)}
+          />
+        </label>
+        <label className="row form-row" htmlFor="profile-photo">
+          <span className="lbl">Photo link</span>
+          <input
+            id="profile-photo"
+            className="inline"
+            inputMode="url"
+            autoComplete="off"
+            placeholder="https://…"
+            value={profile.profileAvatarUrl}
+            onChange={(e) => profile.setProfileAvatarUrl(e.target.value)}
+          />
+        </label>
+      </div>
+      <section className="section">
+        <div className="group">
+          <div className="row">
+            <span className="grow">Public progress</span>
+            <Switch
+              id="profile-public"
+              label="Public progress"
+              checked={profile.isProgressPublic}
+              onChange={profile.setIsProgressPublic}
+            />
+          </div>
+        </div>
+        <p className="footnote">Other members can compare their lifts with yours in Progress.</p>
+      </section>
+      <section className="section">
+        <div className="section-label">Account</div>
+        <div className="group">
+          <div className="row">
+            <span className="grow">Signed in with</span>
+            <span className="value">{providerName}</span>
+          </div>
+          <div className="row">
+            <span className="grow">Member since</span>
+            <span className="value">{memberSince}</span>
+          </div>
+        </div>
+      </section>
+      <button type="button" className="btn btn-primary" onClick={() => void profile.saveProfile()} disabled={profile.isSavingProfile}>
+        Save profile
+      </button>
+    </SubPage>
+  )
+}
+
+function AppearancePage({ preferences, background, onBack }: SettingsTabProps & { onBack: () => void }) {
+  const isCustom = preferences.accentId === CUSTOM_ACCENT_ID
+  const backgroundRow = (kind: BackgroundKind, label: string) => (
+    <button type="button" className="row" onClick={() => background.selectBackground(kind)}>
+      <span className="grow">{label}</span>
+      {background.kind === kind ? <Icon name="check" className="check-mark" /> : null}
+    </button>
+  )
+
+  return (
+    <SubPage title="Appearance" onBack={onBack}>
+      <section className="section">
+        <div className="section-label">Accent colour</div>
+        <div className="group">
+          <div className="swatches">
+            {ACCENT_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="sw"
+                style={{ background: preset.color }}
+                aria-pressed={preferences.accentId === preset.id}
+                aria-label={preset.name}
+                onClick={() => preferences.selectAccent(preset.id)}
               />
-              <Button variant="contained" onClick={onAddExerciseToLibrary} disabled={createExercisePending}>
-                Add
-              </Button>
-            </Stack>
-
-            <Typography variant="body2" className="muted">
-              Your custom exercises
-            </Typography>
-            {exerciseLibrary.length === 0 ? (
-              <Typography variant="body2" className="muted">
-                No custom exercises yet.
-              </Typography>
-            ) : (
-              <List disablePadding sx={{ display: 'grid', gap: 0.7 }}>
-                {exerciseLibrary.map((exercise) => (
-                  <ListItem key={exercise.id} disablePadding>
-                    <Stack direction="row" spacing={1} sx={{ width: '100%', alignItems: 'center' }}>
-                      <Typography sx={{ flex: 1, px: 0.25 }}>{exercise.name}</Typography>
-                      <Button
-                        variant="contained"
-                        sx={{
-                          bgcolor: '#d32f2f',
-                          backgroundImage: 'none',
-                          '&:hover': { bgcolor: '#b71c1c', backgroundImage: 'none' },
-                        }}
-                        onClick={() => onExerciseDeleteRequest(exercise)}
-                        disabled={deleteExercisePending}
-                      >
-                        Delete
-                      </Button>
-                    </Stack>
-                  </ListItem>
-                ))}
-              </List>
-            )}
-
-            <Stack spacing={0.65}>
-              <Typography variant="body2" className="muted">
-                Built-in exercises (available to all users)
-              </Typography>
-              <List disablePadding sx={{ display: 'grid', gap: 0.45 }}>
-                {defaultExerciseNames.map((name) => (
-                  <ListItem key={name} disablePadding>
-                    <Paper
-                      elevation={0}
-                      sx={{
-                        width: '100%',
-                        p: 0.8,
-                        borderRadius: 1.5,
-                        border: '1px solid rgba(173, 142, 255, 0.2)',
-                        background: 'rgba(20, 15, 42, 0.5)',
-                      }}
-                    >
-                      <Typography variant="body2">{name}</Typography>
-                    </Paper>
-                  </ListItem>
-                ))}
-              </List>
-            </Stack>
-          </Stack>
-        ) : settingsView === 'profile' ? (
-          <Stack spacing={1.25}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Typography variant="h6" sx={{ fontSize: '1rem' }}>
-                Profile
-              </Typography>
-              <Button variant="outlined" size="small" onClick={() => onSettingsViewChange('menu')}>
-                Back
-              </Button>
-            </Stack>
-            <Stack spacing={1.35} sx={{ py: 0.5 }}>
-              <Stack direction="row" spacing={1.2} alignItems="center">
-                <Avatar
-                  src={profileAvatarUrl.trim() || undefined}
-                  alt={profileDisplayName || user.email || 'Profile avatar'}
-                  sx={{ width: 56, height: 56 }}
-                >
-                  {(profileDisplayName || user.email || '?').charAt(0).toUpperCase()}
-                </Avatar>
-                <Typography variant="body2" className="muted">
-                  {profileDisplayName}
-                </Typography>
-              </Stack>
-              <TextField
-                label="Display name"
-                value={profileDisplayName}
-                onChange={(event) => onProfileDisplayNameChange(event.target.value)}
-                sx={{ ...fieldSx, mt: 1 }}
-              />
-              <TextField
-                label="Profile picture URL"
-                placeholder="https://..."
-                value={profileAvatarUrl}
-                onChange={(event) => onProfileAvatarUrlChange(event.target.value)}
-                sx={fieldSx}
-              />
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={isProgressPublic}
-                    onChange={(event) => onIsProgressPublicChange(event.target.checked)}
-                  />
-                }
-                label="Public progress (allow others to compare with you)"
-                sx={{ m: 0 }}
-              />
-            </Stack>
-            <Typography variant="body2">
-              <strong>Email:</strong> {user.email ?? 'Not available'}
-            </Typography>
-            <Typography variant="body2">
-              <strong>Provider:</strong> {(user.app_metadata?.provider as string | undefined) ?? 'Not available'}
-            </Typography>
-            <Typography variant="body2">
-              <strong>User ID:</strong> {user.id}
-            </Typography>
-            <Typography variant="body2">
-              <strong>Created:</strong> {new Date(user.created_at).toLocaleString()}
-            </Typography>
-            <Button variant="contained" onClick={onSaveProfile} disabled={upsertProfilePending}>
-              Save profile
-            </Button>
-          </Stack>
-        ) : (
-          <Stack spacing={1.25}>
-            <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Typography variant="h6" sx={{ fontSize: '1rem' }}>
-                Background
-              </Typography>
-              <Button variant="outlined" size="small" onClick={() => onSettingsViewChange('menu')}>
-                Back
-              </Button>
-            </Stack>
-            <Stack spacing={1.5} sx={{ py: 0.5 }}>
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 1.5,
-                  border: '1px solid rgba(173, 142, 255, 0.2)',
-                  background: 'rgba(20, 15, 42, 0.5)',
-                  borderRadius: 1.5,
-                }}
-              >
-                <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: '#b8b0ff' }}>
-                  Quick Preset
-                </Typography>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={useMonkeyBackground}
-                      onChange={(event) => onUseMonkeyBackgroundChange(event.target.checked)}
-                    />
-                  }
-                  label="🐵 Kees modus"
-                  sx={{ m: 0 }}
-                />
-              </Paper>
-
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 1.5,
-                  border: '1px solid rgba(173, 142, 255, 0.2)',
-                  background: 'rgba(20, 15, 42, 0.5)',
-                  borderRadius: 1.5,
-                }}
-              >
-                <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: '#b8b0ff' }}>
-                  Custom Background
-                </Typography>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={useCustomBackground}
-                      onChange={(event) => onUseCustomBackgroundChange(event.target.checked)}
-                    />
-                  }
-                  label="Use custom image"
-                  sx={{ m: 0, mb: 1.2 }}
-                />
-                <TextField
-                  label="Background image URL"
-                  placeholder="https://example.com/image.jpg"
-                  value={backgroundImageUrl}
-                  onChange={(event) => onBackgroundImageUrlChange(event.target.value)}
-                  disabled={!useCustomBackground}
-                  fullWidth
-                  size="small"
-                  sx={fieldSx}
-                />
-                {backgroundImageUrl && useCustomBackground && (
-                  <Typography variant="caption" className="muted" sx={{ display: 'block', mt: 0.8 }}>
-                    ✓ Custom background will be applied
-                  </Typography>
-                )}
-              </Paper>
-
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 1.5,
-                  border: '1px solid rgba(173, 142, 255, 0.2)',
-                  background: 'rgba(20, 15, 42, 0.5)',
-                  borderRadius: 1.5,
-                }}
-              >
-                <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: '#b8b0ff' }}>
-                  Upload Image
-                </Typography>
-                {uploadedBackgroundData && (
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={useUploadedBackground}
-                        onChange={(event) => onUseUploadedBackgroundChange(event.target.checked)}
-                      />
-                    }
-                    label="Use uploaded image"
-                    sx={{ m: 0, mb: 1 }}
-                  />
-                )}
-                <Button
-                  variant="outlined"
-                  component="label"
-                  fullWidth
-                  sx={{ mb: uploadedBackgroundData ? 1 : 0 }}
-                >
-                  📁 Choose Image
-                  <input
-                    hidden
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      if (file) onUploadBackgroundImage(file)
-                    }}
-                  />
-                </Button>
-                {uploadedBackgroundData && (
-                  <>
-                    <Typography variant="caption" className="muted" sx={{ display: 'block', mb: 1 }}>
-                      ✓ Image stored locally (no upload needed)
-                    </Typography>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      fullWidth
-                      onClick={onClearUploadedBackground}
-                      sx={{
-                        color: '#ff6b6b',
-                        borderColor: '#ff6b6b',
-                        '&:hover': { borderColor: '#ff5252', backgroundColor: 'rgba(255, 107, 107, 0.08)' },
-                      }}
-                    >
-                      Clear Uploaded Image
-                    </Button>
-                  </>
-                )}
-              </Paper>
-            </Stack>
-          </Stack>
-        )}
-
-        {settingsView === 'menu' && (
-          <Stack sx={{ pt: 1, borderTop: '1px solid rgba(173, 142, 255, 0.22)' }}>
-            <Button
-              variant="contained"
-              onClick={onRequestSignOut}
-              sx={{
-                bgcolor: '#d32f2f',
-                backgroundImage: 'none',
-                '&:hover': { bgcolor: '#b71c1c', backgroundImage: 'none' },
-              }}
+            ))}
+            <label
+              className="sw sw-custom"
+              aria-pressed={isCustom}
+              style={isCustom ? { background: preferences.accentColor } : undefined}
+              title="Custom colour"
             >
-              Sign out
-            </Button>
-            <Typography variant="caption" className="muted" sx={{ mt: 0.8, textAlign: 'center' }}>
-              Version {appVersion}
-            </Typography>
-          </Stack>
-        )}
-      </Stack>
-    </Paper>
+              <input
+                type="color"
+                value={preferences.customAccent}
+                aria-label="Pick a custom accent colour"
+                onChange={(e) => preferences.chooseCustomAccent(e.target.value)}
+              />
+            </label>
+          </div>
+        </div>
+        <p className="footnote">
+          {preferences.accentName}
+          {preferences.accentId === DEFAULT_ACCENT_ID ? ' (default)' : ''}. The last circle opens your phone’s colour picker. Very
+          dark colours are lightened so text stays readable on black.
+        </p>
+      </section>
+
+      <section className="section">
+        <div className="section-label">Background</div>
+        <div className="group">
+          {backgroundRow('none', 'Plain black')}
+          {backgroundRow('kees', 'Kees modus 🐵')}
+          {backgroundRow('url', 'Image from a link')}
+          {background.hasUploadedImage ? (
+            backgroundRow('upload', 'Photo from your phone')
+          ) : (
+            <label className="row" htmlFor="background-file">
+              <span className="grow">Photo from your phone</span>
+            </label>
+          )}
+        </div>
+        {background.kind === 'url' ? (
+          <input
+            className="field"
+            inputMode="url"
+            autoComplete="off"
+            placeholder="https://example.com/photo.jpg"
+            aria-label="Background image link"
+            value={background.backgroundImageUrl}
+            onChange={(e) => background.changeBackgroundImageUrl(e.target.value)}
+          />
+        ) : null}
+        {background.hasUploadedImage ? (
+          <div className="add-row">
+            <label className="btn btn-tinted" htmlFor="background-file">
+              Choose another photo
+            </label>
+            <button type="button" className="btn btn-danger-tinted" onClick={background.clearUploadedBackground}>
+              Remove
+            </button>
+          </div>
+        ) : null}
+        <input
+          id="background-file"
+          className="visually-hidden-input"
+          type="file"
+          accept="image/*"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) background.uploadBackgroundImage(file)
+            e.target.value = ''
+          }}
+        />
+        <p className="footnote">Saved on this phone only. Cards stay solid over any background, so text stays readable.</p>
+      </section>
+    </SubPage>
+  )
+}
+
+function ExerciseListPage({ library, onBack }: SettingsTabProps & { onBack: () => void }) {
+  return (
+    <SubPage title="Exercise list" onBack={onBack}>
+      <div className="add-row">
+        <input
+          className="field"
+          placeholder="New exercise name"
+          autoComplete="off"
+          enterKeyHint="done"
+          aria-label="New exercise name"
+          value={library.newExerciseInput}
+          onChange={(e) => library.setNewExerciseInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void library.addExerciseToLibrary()
+          }}
+        />
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => void library.addExerciseToLibrary()}
+          disabled={library.createExercisePending}
+        >
+          Add
+        </button>
+      </div>
+
+      <section className="section">
+        <div className="section-label">Your exercises</div>
+        <div className="group">
+          {library.exerciseLibrary.length === 0 ? (
+            <div className="row muted">None yet</div>
+          ) : (
+            library.exerciseLibrary.map((exercise) => (
+              <SwipeRow key={exercise.id} className="row" onDelete={() => library.setDeleteTarget(exercise)}>
+                {exercise.name}
+              </SwipeRow>
+            ))
+          )}
+        </div>
+        <p className="footnote">Swipe left to delete. New names you log in a workout are added here automatically.</p>
+      </section>
+
+      <section className="section">
+        <div className="section-label">Built in · {DEFAULT_EXERCISE_NAMES.length}</div>
+        <div className="group">
+          {DEFAULT_EXERCISE_NAMES.map((name) => (
+            <div className="row" key={name}>
+              {name}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <ConfirmDialog
+        open={library.deleteTarget !== null}
+        title={`Delete “${library.deleteTarget?.name ?? ''}”?`}
+        confirmLabel="Delete"
+        destructive
+        confirmDisabled={library.deleteExercisePending}
+        onCancel={() => library.setDeleteTarget(null)}
+        onConfirm={() => void library.confirmDeleteExercise()}
+      >
+        It disappears from your exercise list. Past workouts keep their sets.
+      </ConfirmDialog>
+    </SubPage>
+  )
+}
+
+function RestClockPage({ preferences, onBack }: SettingsTabProps & { onBack: () => void }) {
+  return (
+    <SubPage title="Rest clock" onBack={onBack}>
+      <section className="section">
+        <div className="group">
+          <div className="row">
+            <span className="grow">Show time since last set</span>
+            <Switch
+              id="rest-clock-enabled"
+              label="Show time since last set"
+              checked={preferences.restClockEnabled}
+              onChange={preferences.changeRestClockEnabled}
+            />
+          </div>
+        </div>
+        <p className="footnote">
+          A clock above the tab bar counts up from the moment you finish a set and starts again at 0:00 with every new set. It’s a
+          reality check on how long you rest; it never beeps or tells you to start.
+        </p>
+      </section>
+    </SubPage>
   )
 }

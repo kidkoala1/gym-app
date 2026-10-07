@@ -5,68 +5,41 @@ import { readLocal, removeLocal, storeLocal } from '../../lib/storage'
 const MAX_BACKGROUND_UPLOAD_BYTES = 2 * 1024 * 1024
 const MONKEY_BACKGROUND_URL = 'https://i.imgur.com/Ub9yNZH.png'
 
+export type BackgroundKind = 'none' | 'kees' | 'url' | 'upload'
+
 type Notify = {
   showError: (message: string) => void
   showSuccess: (message: string) => void
 }
 
 /**
- * The app background: a preset, a custom image URL, or an uploaded image. Only one is active at a
- * time. Everything is stored on this device (localStorage), never sent to the server.
+ * The app background: plain, the Kees modus preset, an image link, or an uploaded photo. Only one
+ * is active at a time. Everything is stored on this device (localStorage), never sent to the server.
+ * The three flags keep their original storage keys so existing choices carry over.
  */
 export function useBackgroundSettings({ showError, showSuccess }: Notify) {
   const [backgroundImageUrl, setBackgroundImageUrl] = useState(() => readLocal('backgroundImageUrl'))
-  const [useCustomBackground, setUseCustomBackground] = useState(
-    () => readLocal('useCustomBackground') === 'true',
-  )
-  const [useMonkeyBackground, setUseMonkeyBackground] = useState(
-    () => readLocal('useMonkeyBackground') === 'true',
-  )
-  const [uploadedBackgroundData, setUploadedBackgroundData] = useState(() =>
-    readLocal('uploadedBackgroundData'),
-  )
-  const [useUploadedBackground, setUseUploadedBackground] = useState(
-    () => readLocal('useUploadedBackground') === 'true',
-  )
+  const [uploadedBackgroundData, setUploadedBackgroundData] = useState(() => readLocal('uploadedBackgroundData'))
+  const [kind, setKind] = useState<BackgroundKind>(() => {
+    if (readLocal('useUploadedBackground') === 'true' && readLocal('uploadedBackgroundData')) return 'upload'
+    if (readLocal('useMonkeyBackground') === 'true') return 'kees'
+    if (readLocal('useCustomBackground') === 'true') return 'url'
+    return 'none'
+  })
 
-  function handleBackgroundImageUrlChange(url: string) {
+  function selectBackground(next: BackgroundKind) {
+    setKind(next)
+    storeLocal('useUploadedBackground', next === 'upload' ? 'true' : 'false')
+    storeLocal('useMonkeyBackground', next === 'kees' ? 'true' : 'false')
+    storeLocal('useCustomBackground', next === 'url' ? 'true' : 'false')
+  }
+
+  function changeBackgroundImageUrl(url: string) {
     setBackgroundImageUrl(url)
     storeLocal('backgroundImageUrl', url)
   }
 
-  function handleUseCustomBackgroundChange(enabled: boolean) {
-    setUseCustomBackground(enabled)
-    storeLocal('useCustomBackground', enabled ? 'true' : 'false')
-    // Disable other backgrounds if enabling custom
-    if (enabled) {
-      if (useMonkeyBackground) {
-        setUseMonkeyBackground(false)
-        storeLocal('useMonkeyBackground', 'false')
-      }
-      if (useUploadedBackground) {
-        setUseUploadedBackground(false)
-        storeLocal('useUploadedBackground', 'false')
-      }
-    }
-  }
-
-  function handleUseMonkeyBackgroundChange(enabled: boolean) {
-    setUseMonkeyBackground(enabled)
-    storeLocal('useMonkeyBackground', enabled ? 'true' : 'false')
-    // Disable other backgrounds if enabling monkey
-    if (enabled) {
-      if (useCustomBackground) {
-        setUseCustomBackground(false)
-        storeLocal('useCustomBackground', 'false')
-      }
-      if (useUploadedBackground) {
-        setUseUploadedBackground(false)
-        storeLocal('useUploadedBackground', 'false')
-      }
-    }
-  }
-
-  function handleUploadBackgroundImage(file: File) {
+  function uploadBackgroundImage(file: File) {
     if (!file.type.startsWith('image/')) {
       showError('Please select an image file.')
       return
@@ -84,67 +57,38 @@ export function useBackgroundSettings({ showError, showSuccess }: Notify) {
         return
       }
       setUploadedBackgroundData(base64)
-      setUseUploadedBackground(true)
-      storeLocal('useUploadedBackground', 'true')
-      // Disable other backgrounds
-      setUseCustomBackground(false)
-      storeLocal('useCustomBackground', 'false')
-      setUseMonkeyBackground(false)
-      storeLocal('useMonkeyBackground', 'false')
-      showSuccess('Image uploaded successfully!')
+      selectBackground('upload')
+      showSuccess('Background updated.')
     }
-    reader.onerror = () => {
-      showError('Failed to read the image file.')
-    }
+    reader.onerror = () => showError('Failed to read the image file.')
     reader.readAsDataURL(file)
   }
 
-  function handleClearUploadedBackground() {
+  function clearUploadedBackground() {
     setUploadedBackgroundData('')
-    setUseUploadedBackground(false)
     removeLocal('uploadedBackgroundData')
-    storeLocal('useUploadedBackground', 'false')
-    showSuccess('Uploaded image removed.')
+    selectBackground('none')
+    showSuccess('Photo removed.')
   }
 
-  function handleUseUploadedBackgroundChange(enabled: boolean) {
-    setUseUploadedBackground(enabled)
-    storeLocal('useUploadedBackground', enabled ? 'true' : 'false')
-    // Disable other backgrounds if enabling uploaded
-    if (enabled) {
-      if (useCustomBackground) {
-        setUseCustomBackground(false)
-        storeLocal('useCustomBackground', 'false')
-      }
-      if (useMonkeyBackground) {
-        setUseMonkeyBackground(false)
-        storeLocal('useMonkeyBackground', 'false')
-      }
-    }
-  }
-
-  // CSS value for the app shell's background-image.
+  // CSS value for the background layer.
   const backgroundImage =
-    useUploadedBackground && uploadedBackgroundData
+    kind === 'upload' && uploadedBackgroundData
       ? toCssUrl(uploadedBackgroundData)
-      : useMonkeyBackground
+      : kind === 'kees'
         ? `url('${MONKEY_BACKGROUND_URL}')`
-        : useCustomBackground && backgroundImageUrl
+        : kind === 'url' && backgroundImageUrl
           ? toCssUrl(backgroundImageUrl)
           : 'none'
 
   return {
+    kind,
     backgroundImage,
     backgroundImageUrl,
-    useCustomBackground,
-    useMonkeyBackground,
-    uploadedBackgroundData,
-    useUploadedBackground,
-    handleBackgroundImageUrlChange,
-    handleUseCustomBackgroundChange,
-    handleUseMonkeyBackgroundChange,
-    handleUploadBackgroundImage,
-    handleClearUploadedBackground,
-    handleUseUploadedBackgroundChange,
+    hasUploadedImage: Boolean(uploadedBackgroundData),
+    selectBackground,
+    changeBackgroundImageUrl,
+    uploadBackgroundImage,
+    clearUploadedBackground,
   }
 }

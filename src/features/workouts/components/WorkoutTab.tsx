@@ -1,297 +1,467 @@
-import {
-  Autocomplete,
-  Button,
-  Chip,
-  List,
-  ListItem,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material'
-import type { ActiveWorkout, ExerciseInsightSet, ExerciseWeightInsights, SetDraft } from '../localTypes'
+import { useState } from 'react'
+import { CircularProgress } from '@mui/material'
+import { ActionSheet } from '../../../components/ActionSheet'
+import { BottomSheet } from '../../../components/BottomSheet'
+import { ConfirmDialog } from '../../../components/ConfirmDialog'
+import { Icon } from '../../../components/Icon'
+import { calendarDaysBetween, formatClock, startOfWeek } from '../../../lib/time'
+import { useNow } from '../../../lib/useNow'
+import type { WorkoutHistoryRow } from '../../../types/db'
+import { WORKOUT_TITLE_SUGGESTIONS } from '../constants'
+import { formatKg, formatSet, longDate, shortDate, timeOfDay } from '../format'
+import type { WorkoutSummary } from '../useActiveWorkout'
+import { isSetSaved, visibleExercises, type DraftWorkout } from '../workoutDraft'
+import { sortedExercises, topSet } from '../workoutStats'
+import { ExerciseCard } from './ExerciseCard'
+import { ExercisePicker } from './ExercisePicker'
+import { WorkoutRow } from './WorkoutRow'
 
 type WorkoutTabProps = {
-  activeWorkout: ActiveWorkout | null
-  isAddingExercise: boolean
-  exerciseNameInput: string
-  workoutTitleInput: string
-  workoutTitleSuggestions: string[]
-  setDrafts: SetDraft[]
+  userId: string
+  workout: DraftWorkout | null
+  resumePending: boolean
+  syncError: string | null
+  recentWorkouts: WorkoutHistoryRow[]
   exerciseNames: string[]
-  exercisesLoading: boolean
-  exerciseInsightsLoading: boolean
-  exerciseInsights: ExerciseWeightInsights | null
-  fieldSx: object
-  startWorkoutPending: boolean
-  finishWorkoutPending: boolean
-  deleteWorkoutPending: boolean
-  onStartWorkout: () => void
-  onFinishWorkout: () => void
-  onOpenCancelWorkoutConfirm: () => void
-  onOpenAddExercise: () => void
-  onFinishExercise: () => void
-  onCancelAddExercise: () => void
-  onWorkoutTitleInputChange: (value: string) => void
-  onSelectWorkoutTitleSuggestion: (value: string) => void
-  onExerciseNameInputChange: (value: string) => void
-  onExerciseNameInputBlur: () => void
-  onUpdateSetDraft: (index: number, field: keyof SetDraft, value: string) => void
+  startPending: boolean
+  finishPending: boolean
+  deletePending: boolean
+  onStart: (title: string) => void
+  onRename: (title: string) => void
+  onAddExercise: (name: string) => void
+  onSwapExercise: (exKey: string, name: string) => void
+  onRemoveExercise: (exKey: string) => void
+  onUpdateSet: (exKey: string, setKey: string, field: 'weight' | 'reps', value: string) => void
+  onDeleteSet: (exKey: string, setKey: string) => void
+  onSaveNow: () => void
+  onFinish: () => Promise<WorkoutSummary | 'empty' | null>
+  onDelete: () => Promise<boolean>
+  onOpenPastWorkout: (workoutId: string) => void
 }
 
-export function WorkoutTab({
-  activeWorkout,
-  isAddingExercise,
-  exerciseNameInput,
-  workoutTitleInput,
-  workoutTitleSuggestions,
-  setDrafts,
-  exerciseNames,
-  exercisesLoading,
-  exerciseInsightsLoading,
-  exerciseInsights,
-  fieldSx,
-  startWorkoutPending,
-  finishWorkoutPending,
-  deleteWorkoutPending,
-  onStartWorkout,
-  onFinishWorkout,
-  onOpenCancelWorkoutConfirm,
-  onOpenAddExercise,
-  onFinishExercise,
-  onCancelAddExercise,
-  onWorkoutTitleInputChange,
-  onSelectWorkoutTitleSuggestion,
-  onExerciseNameInputChange,
-  onExerciseNameInputBlur,
-  onUpdateSetDraft,
-}: WorkoutTabProps) {
-  const hasExerciseName = exerciseNameInput.trim().length > 0
-
-  function formatSetSummary(set: ExerciseInsightSet | null): string {
-    if (!set) return 'No data yet'
-    return `${set.weightKg} kg x ${set.reps}`
-  }
-
-  function formatPerformedDate(set: ExerciseInsightSet | null): string {
-    if (!set) return 'No previous workout found'
-    return new Date(set.performedAt).toLocaleDateString()
-  }
-
-  const titleSuggestions = (
-    <Stack spacing={0.7}>
-      <TextField
-        label="Workout title"
-        placeholder="Push, Legs, Full Body..."
-        value={workoutTitleInput}
-        onChange={(event) => onWorkoutTitleInputChange(event.target.value)}
-        sx={fieldSx}
-      />
-      <Stack direction="row" spacing={0.7} useFlexGap flexWrap="wrap">
-        {workoutTitleSuggestions.map((title) => (
-          <Chip
-            key={title}
-            label={title}
-            clickable
-            color={workoutTitleInput.trim().toLowerCase() === title.toLowerCase() ? 'secondary' : 'default'}
-            onClick={() => onSelectWorkoutTitleSuggestion(title)}
-          />
-        ))}
-      </Stack>
-    </Stack>
-  )
+export function WorkoutTab(props: WorkoutTabProps) {
+  const [summary, setSummary] = useState<WorkoutSummary | null>(null)
 
   return (
-    <Paper className="panel" elevation={0}>
-      {!activeWorkout ? (
-        <Stack spacing={1.25}>
-          <Typography>No active workout session.</Typography>
-          {titleSuggestions}
-          <Button variant="contained" onClick={onStartWorkout} disabled={startWorkoutPending}>
-            Start Workout
-          </Button>
-        </Stack>
+    <>
+      {props.workout ? (
+        <ActiveWorkout {...props} workout={props.workout} onFinished={setSummary} />
+      ) : props.resumePending ? (
+        <div className="spinner-row">
+          <CircularProgress size={26} aria-label="Loading" />
+        </div>
       ) : (
-        <Stack spacing={1.25}>
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between">
-            <Stack spacing={0.45}>
-              <Typography>Started: {new Date(activeWorkout.startedAt).toLocaleString()}</Typography>
-              <Typography variant="body2" className="muted">
-                {activeWorkout.title?.trim() || 'Untitled workout'}
-              </Typography>
-            </Stack>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-              <Button
-                variant="outlined"
-                color="error"
-                onClick={onOpenCancelWorkoutConfirm}
-                disabled={deleteWorkoutPending}
-              >
-                Cancel Workout
-              </Button>
-              <Button
-                variant="contained"
-                color="error"
-                onClick={onFinishWorkout}
-                disabled={finishWorkoutPending}
-              >
-                Finish Workout
-              </Button>
-            </Stack>
-          </Stack>
-
-          {titleSuggestions}
-
-          <Stack spacing={0.75}>
-            <Typography variant="h6" sx={{ fontSize: '1rem' }}>
-              Current Exercises
-            </Typography>
-            {activeWorkout.exercises.length === 0 ? (
-              <Typography className="muted">No exercises added yet.</Typography>
-            ) : (
-              <List disablePadding sx={{ display: 'grid', gap: 0.7 }}>
-                {activeWorkout.exercises.map((exercise, idx) => (
-                  <ListItem key={`${exercise.name}-${idx}`} className="exercise-card" disablePadding>
-                    <Stack>
-                      <Typography sx={{ fontWeight: 700 }}>{exercise.name}</Typography>
-                      <Typography variant="body2" sx={{ color: '#c2c7f1' }}>
-                        {exercise.sets.map((set) => `${set.reps} reps x ${set.weightKg} kg`).join(' | ')}
-                      </Typography>
-                    </Stack>
-                  </ListItem>
-                ))}
-              </List>
-            )}
-          </Stack>
-
-          {!isAddingExercise ? (
-            <Button variant="contained" onClick={onOpenAddExercise}>
-              Add Exercise
-            </Button>
-          ) : (
-            <Paper className="card" elevation={0}>
-              <Typography variant="h6" sx={{ fontSize: '1rem', mb: 0.6 }}>
-                New Exercise
-              </Typography>
-
-              <Autocomplete
-                freeSolo
-                options={exerciseNames}
-                loading={exercisesLoading}
-                inputValue={exerciseNameInput}
-                onInputChange={(_, value) => onExerciseNameInputChange(value)}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Exercise"
-                    placeholder="Type exercise name"
-                    sx={fieldSx}
-                    onBlur={onExerciseNameInputBlur}
-                  />
-                )}
-                sx={{ mb: 0.7 }}
-              />
-
-              {hasExerciseName && (
-                <Stack spacing={0.7} sx={{ mb: 0.9 }}>
-                  <Typography variant="body2" sx={{ color: '#c7cbf7', fontWeight: 700 }}>
-                    Weight guidance
-                  </Typography>
-
-                  {exerciseInsightsLoading ? (
-                    <Typography variant="body2" className="muted">
-                      Loading history...
-                    </Typography>
-                  ) : (
-                    <Stack
-                      direction={{ xs: 'column', sm: 'row' }}
-                      spacing={0.7}
-                      sx={{ '& > *': { flex: 1, minWidth: 0 } }}
-                    >
-                      <Paper className="exercise-card" elevation={0}>
-                        <Typography variant="caption" sx={{ color: '#c7cbf7' }}>
-                          Suggested Today
-                        </Typography>
-                        <Typography sx={{ fontWeight: 700, fontSize: '0.95rem' }}>
-                          {formatSetSummary(exerciseInsights?.suggestedToday ?? null)}
-                        </Typography>
-                        <Typography variant="caption" className="muted">
-                          {exerciseInsights?.suggestedToday
-                            ? 'Based on your last successful session'
-                            : 'Log one session to unlock a suggestion'}
-                        </Typography>
-                      </Paper>
-
-                      <Paper className="exercise-card" elevation={0}>
-                        <Typography variant="caption" sx={{ color: '#c7cbf7' }}>
-                          Last Session
-                        </Typography>
-                        <Typography sx={{ fontWeight: 700, fontSize: '0.95rem' }}>
-                          {formatSetSummary(exerciseInsights?.lastSession ?? null)}
-                        </Typography>
-                        <Typography variant="caption" className="muted">
-                          {formatPerformedDate(exerciseInsights?.lastSession ?? null)}
-                        </Typography>
-                      </Paper>
-
-                      <Paper className="exercise-card" elevation={0}>
-                        <Typography variant="caption" sx={{ color: '#c7cbf7' }}>
-                          Recent Best (60d)
-                        </Typography>
-                        <Typography sx={{ fontWeight: 700, fontSize: '0.95rem' }}>
-                          {formatSetSummary(exerciseInsights?.recentBest ?? null)}
-                        </Typography>
-                        <Typography variant="caption" className="muted">
-                          {formatPerformedDate(exerciseInsights?.recentBest ?? null)}
-                        </Typography>
-                      </Paper>
-                    </Stack>
-                  )}
-                </Stack>
-              )}
-
-              <Stack direction="row" spacing={1}>
-                <Typography sx={{ flex: 1, fontSize: '0.8rem', color: '#c7cbf7' }}>Reps</Typography>
-                <Typography sx={{ flex: 1, fontSize: '0.8rem', color: '#c7cbf7' }}>
-                  Weight (kg)
-                </Typography>
-              </Stack>
-
-              <Stack spacing={0.7} sx={{ mb: 0.75 }}>
-                {setDrafts.map((set, idx) => (
-                  <Stack key={`set-${idx}`} direction="row" spacing={1}>
-                    <TextField
-                      type="text"
-                      placeholder="Reps"
-                      value={set.reps}
-                      onChange={(event) => onUpdateSetDraft(idx, 'reps', event.target.value)}
-                      inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', min: 1 }}
-                      sx={{ ...fieldSx, flex: 1 }}
-                    />
-                    <TextField
-                      type="text"
-                      placeholder="Weight (kg)"
-                      value={set.weight}
-                      onChange={(event) => onUpdateSetDraft(idx, 'weight', event.target.value)}
-                      inputProps={{ inputMode: 'decimal', pattern: '[0-9]*[.,]?[0-9]*', min: 0, step: 0.5 }}
-                      sx={{ ...fieldSx, flex: 1 }}
-                    />
-                  </Stack>
-                ))}
-              </Stack>
-
-              <Stack direction="row" spacing={1}>
-                <Button variant="contained" onClick={onFinishExercise} fullWidth>
-                  Finish Exercise
-                </Button>
-                <Button variant="outlined" onClick={onCancelAddExercise}>
-                  Cancel
-                </Button>
-              </Stack>
-            </Paper>
-          )}
-        </Stack>
+        <IdleWorkout {...props} />
       )}
-    </Paper>
+
+      <BottomSheet open={summary !== null} onClose={() => setSummary(null)}>
+        {summary ? (
+          <div className="summary">
+            <div className="sum-icon">
+              <Icon name="check" />
+            </div>
+            <h2>Workout saved</h2>
+            <p className="muted">
+              {summary.title} · {longDate(summary.startedAt)}
+            </p>
+            <div className="tiles two" style={{ width: '100%', textAlign: 'left' }}>
+              <div className="tile">
+                <div className="k">Duration</div>
+                <div className="v">
+                  {summary.durationMin}
+                  <small>min</small>
+                </div>
+              </div>
+              <div className="tile">
+                <div className="k">Exercises</div>
+                <div className="v">{summary.exerciseCount}</div>
+              </div>
+              <div className="tile">
+                <div className="k">Sets</div>
+                <div className="v">{summary.setCount}</div>
+              </div>
+              <div className="tile">
+                <div className="k">Volume</div>
+                <div className="v">{formatKg(summary.volumeKg)}</div>
+              </div>
+            </div>
+            <button type="button" className="btn btn-primary" onClick={() => setSummary(null)}>
+              Done
+            </button>
+          </div>
+        ) : null}
+      </BottomSheet>
+    </>
+  )
+}
+
+function IdleWorkout({ recentWorkouts, startPending, onStart, onOpenPastWorkout }: WorkoutTabProps) {
+  const now = useNow(60_000)
+  const [title, setTitle] = useState('')
+  const lastWorkout = recentWorkouts[0]
+
+  const monday = new Date(startOfWeek(now))
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const date = new Date(monday)
+    date.setDate(monday.getDate() + i)
+    const trained = recentWorkouts.some((w) => calendarDaysBetween(w.started_at, date) === 0)
+    const offset = calendarDaysBetween(now, date)
+    return { date, trained, isToday: offset === 0, isFuture: offset > 0 }
+  })
+  const trainedCount = days.filter((day) => day.trained).length
+
+  const lastLabel = lastWorkout
+    ? (() => {
+        const ago = calendarDaysBetween(lastWorkout.started_at, now)
+        if (ago <= 0) return 'today'
+        if (ago === 1) return 'yesterday'
+        if (ago < 7) return `on ${new Date(lastWorkout.started_at).toLocaleDateString('en-GB', { weekday: 'long' })}`
+        return `on ${shortDate(lastWorkout.started_at)}`
+      })()
+    : ''
+
+  return (
+    <>
+      <header className="lt">
+        <p className="eyebrow">{longDate(now)}</p>
+        <h1>Workout</h1>
+      </header>
+      <div className="stack">
+        <section className="card">
+          <div className="card-head">
+            <h2>This week</h2>
+            <span className="muted sm">
+              {trainedCount} {trainedCount === 1 ? 'workout' : 'workouts'}
+            </span>
+          </div>
+          <div className="week">
+            {days.map((day, i) => (
+              <div
+                key={i}
+                className={['day', day.trained && 'on', day.isToday && 'today', day.isFuture && 'future'].filter(Boolean).join(' ')}
+              >
+                {'MTWTFSS'[i]}
+                <b>{day.date.getDate()}</b>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="card">
+          <h2>Start a workout</h2>
+          <div className="chips">
+            {WORKOUT_TITLE_SUGGESTIONS.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                className="chip"
+                aria-pressed={suggestion.toLowerCase() === title.trim().toLowerCase()}
+                onClick={() => setTitle(suggestion)}
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+          <input
+            className="field"
+            placeholder="Or type a name"
+            autoComplete="off"
+            enterKeyHint="go"
+            aria-label="Workout name"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !startPending) onStart(title)
+            }}
+          />
+          <button type="button" className="btn btn-primary" onClick={() => onStart(title)} disabled={startPending}>
+            Start workout
+          </button>
+        </section>
+
+        {lastWorkout ? (
+          <section className="section">
+            <div className="section-label">Last workout · {lastLabel}</div>
+            <div className="group hist">
+              <WorkoutRow workout={lastWorkout} onOpen={() => onOpenPastWorkout(lastWorkout.id)} />
+            </div>
+          </section>
+        ) : null}
+      </div>
+    </>
+  )
+}
+
+type PickerState = { mode: 'add' } | { mode: 'swap'; exKey: string } | null
+type ConfirmState = { kind: 'delete-workout' } | { kind: 'empty-finish' } | { kind: 'remove-exercise'; exKey: string } | null
+
+function ActiveWorkout({
+  userId,
+  workout,
+  syncError,
+  recentWorkouts,
+  exerciseNames,
+  finishPending,
+  deletePending,
+  onRename,
+  onAddExercise,
+  onSwapExercise,
+  onRemoveExercise,
+  onUpdateSet,
+  onDeleteSet,
+  onSaveNow,
+  onFinish,
+  onDelete,
+  onFinished,
+}: WorkoutTabProps & { workout: DraftWorkout; onFinished: (summary: WorkoutSummary) => void }) {
+  const now = useNow(1000)
+  const [renameDraft, setRenameDraft] = useState<string | null>(null)
+  const [workoutMenuOpen, setWorkoutMenuOpen] = useState(false)
+  const [exerciseMenuKey, setExerciseMenuKey] = useState<string | null>(null)
+  const [picker, setPicker] = useState<PickerState>(null)
+  const [confirm, setConfirm] = useState<ConfirmState>(null)
+
+  const exercises = visibleExercises(workout)
+  const savedSetCount = exercises.reduce((sum, exercise) => sum + exercise.sets.filter(isSetSaved).length, 0)
+  const menuExercise = exercises.find((exercise) => exercise.key === exerciseMenuKey)
+  const removeTarget = confirm?.kind === 'remove-exercise' ? exercises.find((e) => e.key === confirm.exKey) : undefined
+
+  // Past workouts only; the live one is in the list too once it has sets.
+  const pastWorkouts = recentWorkouts.filter((w) => w.id !== workout.id)
+  const inWorkout = new Set(exercises.map((exercise) => exercise.name.toLowerCase()))
+  const sameTitle = workout.title
+    ? pastWorkouts.find((w) => w.title?.trim().toLowerCase() === workout.title?.trim().toLowerCase())
+    : undefined
+  const suggested = sameTitle
+    ? {
+        label: `From your last ${sameTitle.title} · ${shortDate(sameTitle.started_at)}`,
+        names: sortedExercises(sameTitle.workout_exercises)
+          .map((e) => e.exercise_name)
+          .filter((name) => !inWorkout.has(name.toLowerCase())),
+      }
+    : {
+        label: 'Recent',
+        names: [...new Set(pastWorkouts.slice(0, 4).flatMap((w) => sortedExercises(w.workout_exercises).map((e) => e.exercise_name)))]
+          .filter((name) => !inWorkout.has(name.toLowerCase()))
+          .slice(0, 6),
+      }
+  const describe = (name: string) => {
+    for (const past of pastWorkouts) {
+      const match = past.workout_exercises.find((e) => e.exercise_name.toLowerCase() === name.toLowerCase())
+      const best = match ? topSet(match.workout_sets) : null
+      if (best) return formatSet(Number(best.weight_kg), Number(best.reps))
+    }
+    return undefined
+  }
+
+  async function finish() {
+    const result = await onFinish()
+    if (result === 'empty') setConfirm({ kind: 'empty-finish' })
+    else if (result) onFinished(result)
+  }
+
+  return (
+    <>
+      <div className="wbar">
+        <button type="button" className="wtitle" onClick={() => setRenameDraft(workout.title ?? '')} aria-label="Rename workout">
+          <span className="wt">
+            <span>{workout.title || 'Workout'}</span>
+            <Icon name="chevronDown" />
+          </span>
+          <span className="wsub">
+            Started {timeOfDay(workout.startedAt)} · {savedSetCount} {savedSetCount === 1 ? 'set' : 'sets'} saved
+          </span>
+        </button>
+        <span className="elapsed" aria-label="Time since the workout started">
+          {formatClock(now - new Date(workout.startedAt).getTime())}
+        </span>
+        <button type="button" className="icon-btn" onClick={() => setWorkoutMenuOpen(true)} aria-label="Workout options">
+          <Icon name="more" />
+        </button>
+      </div>
+
+      <div className="stack tight">
+        {syncError ? (
+          <div className="banner" role="status">
+            <Icon name="alert" className="chev" />
+            <span>Some sets aren’t saved yet ({syncError}). Retrying automatically.</span>
+          </div>
+        ) : null}
+
+        {exercises.length === 0 ? (
+          <section className="card">
+            <h2>No exercises yet</h2>
+            <p className="muted">
+              Add your first exercise. The weight starts at what you lifted last time, so you usually only type the reps.
+            </p>
+          </section>
+        ) : (
+          exercises.map((exercise) => (
+            <ExerciseCard
+              key={exercise.key}
+              userId={userId}
+              workoutId={workout.id}
+              exercise={exercise}
+              onChangeSet={(setKey, field, value) => onUpdateSet(exercise.key, setKey, field, value)}
+              onDeleteSet={(setKey) => onDeleteSet(exercise.key, setKey)}
+              onBlur={onSaveNow}
+              onOpenMenu={() => setExerciseMenuKey(exercise.key)}
+            />
+          ))
+        )}
+
+        <button type="button" className="btn btn-tinted" onClick={() => setPicker({ mode: 'add' })}>
+          <Icon name="plus" /> Add exercise
+        </button>
+        <div className="finish-zone">
+          <button type="button" className="btn btn-plain" onClick={() => void finish()} disabled={finishPending}>
+            Finish workout
+          </button>
+          <p className="footnote center">
+            A set saves itself once it has weight and reps, and the next row appears. Swipe a set left to delete it.
+          </p>
+        </div>
+      </div>
+
+      <ExercisePicker
+        open={picker !== null}
+        title={picker?.mode === 'swap' ? 'Swap exercise' : 'Add exercise'}
+        names={exerciseNames}
+        suggested={suggested}
+        describe={describe}
+        onClose={() => setPicker(null)}
+        onPick={(name) => {
+          if (picker?.mode === 'swap') onSwapExercise(picker.exKey, name)
+          else onAddExercise(name)
+          setPicker(null)
+        }}
+      />
+
+      <BottomSheet
+        open={renameDraft !== null}
+        onClose={() => setRenameDraft(null)}
+        title="Workout name"
+        left={
+          <button type="button" onClick={() => setRenameDraft(null)}>
+            Cancel
+          </button>
+        }
+        right={
+          <button
+            type="button"
+            onClick={() => {
+              onRename(renameDraft ?? '')
+              setRenameDraft(null)
+            }}
+          >
+            Save
+          </button>
+        }
+      >
+        <div className="stack-sm">
+          <input
+            className="field"
+            placeholder="Workout name"
+            autoComplete="off"
+            enterKeyHint="done"
+            aria-label="Workout name"
+            value={renameDraft ?? ''}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                onRename(renameDraft ?? '')
+                setRenameDraft(null)
+              }
+            }}
+          />
+          <div className="chips">
+            {WORKOUT_TITLE_SUGGESTIONS.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                className="chip"
+                aria-pressed={suggestion.toLowerCase() === (renameDraft ?? '').trim().toLowerCase()}
+                onClick={() => setRenameDraft(suggestion)}
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        </div>
+      </BottomSheet>
+
+      <ActionSheet
+        open={workoutMenuOpen}
+        onClose={() => setWorkoutMenuOpen(false)}
+        items={[
+          { label: 'Rename workout', onSelect: () => setRenameDraft(workout.title ?? '') },
+          { label: 'Delete workout', destructive: true, onSelect: () => setConfirm({ kind: 'delete-workout' }) },
+        ]}
+      />
+
+      <ActionSheet
+        open={menuExercise !== undefined}
+        title={menuExercise?.name}
+        onClose={() => setExerciseMenuKey(null)}
+        items={
+          menuExercise
+            ? [
+                { label: 'Swap exercise', onSelect: () => setPicker({ mode: 'swap', exKey: menuExercise.key }) },
+                {
+                  label: 'Remove exercise',
+                  destructive: true,
+                  onSelect: () => setConfirm({ kind: 'remove-exercise', exKey: menuExercise.key }),
+                },
+              ]
+            : []
+        }
+      />
+
+      <ConfirmDialog
+        open={confirm?.kind === 'delete-workout'}
+        title="Delete this workout?"
+        cancelLabel="Keep it"
+        confirmLabel="Delete"
+        destructive
+        confirmDisabled={deletePending}
+        onCancel={() => setConfirm(null)}
+        onConfirm={async () => {
+          if (await onDelete()) setConfirm(null)
+        }}
+      >
+        The workout and its {savedSetCount} saved {savedSetCount === 1 ? 'set' : 'sets'} will be removed. This can’t be undone.
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={confirm?.kind === 'empty-finish'}
+        title="Nothing logged yet"
+        cancelLabel="Keep going"
+        confirmLabel="Delete"
+        destructive
+        confirmDisabled={deletePending}
+        onCancel={() => setConfirm(null)}
+        onConfirm={async () => {
+          if (await onDelete()) setConfirm(null)
+        }}
+      >
+        Fill in at least one set, or delete this workout.
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={removeTarget !== undefined}
+        title={`Remove ${removeTarget?.name ?? 'exercise'}?`}
+        confirmLabel="Remove"
+        destructive
+        onCancel={() => setConfirm(null)}
+        onConfirm={() => {
+          if (removeTarget) onRemoveExercise(removeTarget.key)
+          setConfirm(null)
+        }}
+      >
+        {removeTarget && removeTarget.sets.some(isSetSaved)
+          ? 'Its saved sets will be deleted from this workout.'
+          : 'It has no saved sets yet.'}
+      </ConfirmDialog>
+    </>
   )
 }
