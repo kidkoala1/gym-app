@@ -25,24 +25,21 @@ import { SettingsTab } from './features/settings/components/SettingsTab'
 import { HistoryTab } from './features/workouts/components/HistoryTab'
 import { ProgressTab } from './features/workouts/components/ProgressTab'
 import { WorkoutTab } from './features/workouts/components/WorkoutTab'
-import type { ExerciseInsightHistoryRow, ExerciseRow, WorkoutHistoryRow, WorkoutSetInput } from './types/db'
+import type { ExerciseInsightHistoryRow, ExerciseRow, WorkoutHistoryRow } from './types/db'
 import {
   createExercise,
   createWorkout,
   deleteExercise,
   deleteWorkout,
-  deleteWorkoutExercise,
   finishWorkout as finishWorkoutApi,
   getCanonicalExerciseName,
   getUnfinishedWorkout,
-  insertWorkoutExercise,
-  insertWorkoutSets,
   listExerciseInsightHistory,
   listExercises,
   listLoggedExerciseNames,
   listWorkoutHistory,
-  updateWorkoutExerciseName,
-  updateWorkoutSet,
+  saveWorkoutEdit as saveWorkoutEditApi,
+  type WorkoutEditExercise,
 } from './features/workouts/api'
 import type {
   ActiveWorkout,
@@ -738,20 +735,19 @@ function App() {
         throw new Error('Authentication session expired. Please refresh and try again.')
       }
 
-      const existingPositions =
-        historyWorkoutsQuery.data
-          ?.find((item) => item.id === workoutId)
-          ?.workout_exercises.map((exercise) => exercise.position) ?? []
-      let nextPosition = Math.max(0, ...existingPositions) + 1
       const originalNames = new Map(
         historyWorkoutsQuery.data
           ?.find((item) => item.id === workoutId)
           ?.workout_exercises.map((exercise) => [exercise.id, exercise.exercise_name.trim()] as const) ?? [],
       )
 
+      const payload: WorkoutEditExercise[] = []
+      const newLibraryNames: string[] = []
+
       for (const exercise of draft) {
         if (exercise.deleted) {
-          await deleteWorkoutExercise(exercise.id)
+          // Exercises added during this edit only exist locally; nothing to delete in the database.
+          if (!exercise.isNew) payload.push({ id: exercise.id, deleted: true })
           continue
         }
 
@@ -759,54 +755,44 @@ function App() {
         if (!cleanedName) throw new Error('Exercise title cannot be empty.')
 
         if (exercise.isNew) {
-          // New exercise - append after the highest existing position (positions can have gaps)
-          const completedSets: WorkoutSetInput[] = exercise.sets
-            .filter((set) => isValidSetValues(Number(set.reps), parseLocalizedDecimal(set.weight_kg)))
-            .map((set) => ({
-              reps: Number(set.reps),
-              weightKg: parseLocalizedDecimal(set.weight_kg),
-            }))
-
-          const workoutExercise = await insertWorkoutExercise(workoutId, cleanedName, nextPosition)
-          nextPosition += 1
-
-          if (completedSets.length > 0) {
-            try {
-              await insertWorkoutSets(workoutExercise.id, completedSets)
-            } catch (error) {
-              await deleteWorkoutExercise(workoutExercise.id).catch(() => undefined)
-              throw error
-            }
-          }
+          payload.push({
+            name: cleanedName,
+            sets: exercise.sets
+              .filter((set) => isValidSetValues(Number(set.reps), parseLocalizedDecimal(set.weight_kg)))
+              .map((set) => ({ reps: Number(set.reps), weight_kg: parseLocalizedDecimal(set.weight_kg) })),
+          })
 
           if (!exerciseNames.some((name) => name.toLowerCase() === cleanedName.toLowerCase())) {
-            try {
-              await createExerciseMutation.mutateAsync(cleanedName)
-            } catch (error) {
-              const maybeDuplicate = error as Error & { code?: string | null }
-              if (maybeDuplicate.code !== '23505') throw error
-            }
+            newLibraryNames.push(cleanedName)
           }
         } else {
-          // Existing exercise - only touch the stored name if the user changed it
-          if (exercise.exercise_name.trim() !== originalNames.get(exercise.id)) {
-            await updateWorkoutExerciseName(exercise.id, cleanedName)
-          }
+          payload.push({
+            id: exercise.id,
+            // Only touch the stored name if the user changed it
+            name: exercise.exercise_name.trim() !== originalNames.get(exercise.id) ? cleanedName : undefined,
+            sets: exercise.sets.map((set) => {
+              const reps = Number(set.reps)
+              const weight = parseLocalizedDecimal(set.weight_kg)
 
-          for (const set of exercise.sets) {
-            const reps = Number(set.reps)
-            const weight = parseLocalizedDecimal(set.weight_kg)
+              if (!Number.isFinite(reps) || reps <= 0 || reps > MAX_REPS) {
+                throw new Error(`Reps must be between 1 and ${MAX_REPS}.`)
+              }
+              if (!Number.isFinite(weight) || weight < 0 || weight > MAX_WEIGHT_KG) {
+                throw new Error(`Weight must be between 0 and ${MAX_WEIGHT_KG} kg.`)
+              }
 
-            if (!Number.isFinite(reps) || reps <= 0 || reps > MAX_REPS) {
-              throw new Error(`Reps must be between 1 and ${MAX_REPS}.`)
-            }
-            if (!Number.isFinite(weight) || weight < 0 || weight > MAX_WEIGHT_KG) {
-              throw new Error(`Weight must be between 0 and ${MAX_WEIGHT_KG} kg.`)
-            }
-
-            await updateWorkoutSet(set.id, reps, weight)
-          }
+              return { id: set.id, reps, weight_kg: weight }
+            }),
+          })
         }
+      }
+
+      // One transaction: either the whole edit is saved or the workout is left untouched.
+      await saveWorkoutEditApi(workoutId, payload)
+
+      // Best-effort: remember new exercise names in the user's library (the edit is already saved).
+      for (const name of newLibraryNames) {
+        await createExerciseMutation.mutateAsync(name).catch(() => undefined)
       }
 
       await queryClient.invalidateQueries({ queryKey: ['workout-history', user?.id] })
@@ -968,15 +954,12 @@ function App() {
     if (completedSets.length === 0) return
 
     try {
-      const position = activeWorkout.exercises.length + 1
-      const workoutExercise = await insertWorkoutExercise(activeWorkout.id, cleanedName, position)
-      try {
-        await insertWorkoutSets(workoutExercise.id, completedSets)
-      } catch (error) {
-        // Don't leave an exercise row without sets: it would block retrying at the same position.
-        await deleteWorkoutExercise(workoutExercise.id).catch(() => undefined)
-        throw error
-      }
+      await saveWorkoutEditApi(activeWorkout.id, [
+        {
+          name: cleanedName,
+          sets: completedSets.map((set) => ({ reps: set.reps, weight_kg: set.weightKg })),
+        },
+      ])
 
       setActiveWorkout((prev) =>
         prev

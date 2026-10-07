@@ -20,7 +20,6 @@ Remaining:
 
 ## Other open items
 
-- **History edits are not atomic.** `saveWorkoutEdit` issues many separate writes; a mid-way failure leaves a partial edit. Needs a Postgres function that applies the whole edit in one transaction.
 - **Unbounded queries.** `listWorkoutHistory` and `listLoggedExerciseNames` fetch everything for a user. Add pagination or move to RPCs.
 - **`title` fallbacks in `workouts/api.ts`.** The column exists everywhere now; the missing-column retry paths can be removed.
 - **No Content-Security-Policy.** Needs to be set as a hosting header (a meta tag breaks the Vite dev server).

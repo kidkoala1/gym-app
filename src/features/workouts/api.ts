@@ -3,9 +3,6 @@ import type {
   ExerciseInsightHistoryRow,
   ExerciseRow,
   WorkoutRow,
-  WorkoutSetInput,
-  WorkoutSetRow,
-  WorkoutExerciseRow,
   WorkoutHistoryRow,
   WorkoutWithExerciseRefs,
   ProgressSeriesRow,
@@ -136,75 +133,30 @@ export async function deleteWorkout(workoutId: string, userId: string): Promise<
   if (error) throwSupabaseError(error)
 }
 
-export async function insertWorkoutExercise(
-  workoutId: string,
-  exerciseName: string,
-  position: number,
-): Promise<WorkoutExerciseRow> {
-  const { data, error } = await supabase
-    .from('workout_exercises')
-    .insert({ workout_id: workoutId, exercise_name: exerciseName, position })
-    .select('id,workout_id,exercise_name,position')
-    .single()
-
-  if (error) throwSupabaseError(error)
-  return data as WorkoutExerciseRow
+export type WorkoutEditSet = {
+  id?: string
+  reps: number
+  weight_kg: number
 }
 
-export async function updateWorkoutExerciseName(
-  workoutExerciseId: string,
-  exerciseName: string,
-): Promise<WorkoutExerciseRow> {
-  const { data, error } = await supabase
-    .from('workout_exercises')
-    .update({ exercise_name: exerciseName })
-    .eq('id', workoutExerciseId)
-    .select('id,workout_id,exercise_name,position')
-    .single()
-
-  if (error) throwSupabaseError(error)
-  return data as WorkoutExerciseRow
+export type WorkoutEditExercise = {
+  id?: string
+  deleted?: boolean
+  name?: string
+  sets?: WorkoutEditSet[]
 }
 
-export async function deleteWorkoutExercise(workoutExerciseId: string): Promise<void> {
-  const { error } = await supabase.from('workout_exercises').delete().eq('id', workoutExerciseId)
-  if (error) throwSupabaseError(error)
-}
-
-export async function insertWorkoutSets(
-  workoutExerciseId: string,
-  sets: WorkoutSetInput[],
-): Promise<WorkoutSetRow[]> {
-  const payload = sets.map((set, index) => ({
-    workout_exercise_id: workoutExerciseId,
-    set_number: index + 1,
-    reps: set.reps,
-    weight_kg: set.weightKg,
-  }))
-
-  const { data, error } = await supabase
-    .from('workout_sets')
-    .insert(payload)
-    .select('id,workout_exercise_id,set_number,reps,weight_kg')
+/**
+ * Applies a whole workout edit in one database transaction (see save_workout_edit).
+ * Exercises without an id are appended after the workout's last position.
+ */
+export async function saveWorkoutEdit(workoutId: string, exercises: WorkoutEditExercise[]): Promise<void> {
+  const { error } = await supabase.rpc('save_workout_edit', {
+    p_workout_id: workoutId,
+    p_exercises: exercises,
+  })
 
   if (error) throwSupabaseError(error)
-  return (data ?? []) as WorkoutSetRow[]
-}
-
-export async function updateWorkoutSet(
-  workoutSetId: string,
-  reps: number,
-  weightKg: number,
-): Promise<WorkoutSetRow> {
-  const { data, error } = await supabase
-    .from('workout_sets')
-    .update({ reps, weight_kg: weightKg })
-    .eq('id', workoutSetId)
-    .select('id,workout_exercise_id,set_number,reps,weight_kg')
-    .single()
-
-  if (error) throwSupabaseError(error)
-  return data as WorkoutSetRow
 }
 
 export async function listRecentWorkouts(
