@@ -4,7 +4,6 @@ import type {
   ExerciseRow,
   WorkoutRow,
   WorkoutHistoryRow,
-  WorkoutWithExerciseRefs,
   ProgressSeriesRow,
   PublicProfileRow,
 } from '../../types/db'
@@ -159,35 +158,20 @@ export async function saveWorkoutEdit(workoutId: string, exercises: WorkoutEditE
   if (error) throwSupabaseError(error)
 }
 
-export async function listRecentWorkouts(
-  userId: string,
-  limit: number,
-): Promise<WorkoutWithExerciseRefs[]> {
-  const { data, error } = await supabase
-    .from('workouts')
-    .select('id,started_at,finished_at,title,workout_exercises(id)')
-    .eq('user_id', userId)
-    .order('started_at', { ascending: false })
-    .limit(limit)
-
-  if (!error) return (data ?? []) as WorkoutWithExerciseRefs[]
-  if (!isMissingColumnError(error, 'workouts', 'title')) throwSupabaseError(error)
-
-  const fallback = await supabase
-    .from('workouts')
-    .select('id,started_at,finished_at,workout_exercises(id)')
-    .eq('user_id', userId)
-    .order('started_at', { ascending: false })
-    .limit(limit)
-
-  if (fallback.error) throwSupabaseError(fallback.error)
-  return ((fallback.data ?? []) as Array<Omit<WorkoutWithExerciseRefs, 'title'>>).map((workout) => ({
-    ...workout,
-    title: null,
-  }))
+export type WorkoutHistoryPage = {
+  workouts: WorkoutHistoryRow[]
+  hasMore: boolean
 }
 
-export async function listWorkoutHistory(userId: string): Promise<WorkoutHistoryRow[]> {
+/** One page of the user's workouts, newest first. `page` is zero-based. */
+export async function listWorkoutHistoryPage(
+  userId: string,
+  page: number,
+  pageSize: number,
+): Promise<WorkoutHistoryPage> {
+  const from = page * pageSize
+
+  // Ask for one extra row so we know whether another page exists without a count query.
   const { data, error } = await supabase
     .from('workouts')
     .select(
@@ -195,42 +179,20 @@ export async function listWorkoutHistory(userId: string): Promise<WorkoutHistory
     )
     .eq('user_id', userId)
     .order('started_at', { ascending: false })
-
-  if (!error) return (data ?? []) as WorkoutHistoryRow[]
-  if (!isMissingColumnError(error, 'workouts', 'title')) throwSupabaseError(error)
-
-  const fallback = await supabase
-    .from('workouts')
-    .select(
-      'id,started_at,finished_at,workout_exercises(id,exercise_name,canonical_exercise_name,position,workout_sets(id,set_number,reps,weight_kg))',
-    )
-    .eq('user_id', userId)
-    .order('started_at', { ascending: false })
-
-  if (fallback.error) throwSupabaseError(fallback.error)
-  return ((fallback.data ?? []) as Array<Omit<WorkoutHistoryRow, 'title'>>).map((workout) => ({
-    ...workout,
-    title: null,
-  }))
-}
-
-export async function listLoggedExerciseNames(userId: string): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('workouts')
-    .select('workout_exercises(canonical_exercise_name)')
-    .eq('user_id', userId)
+    .order('id', { ascending: false })
+    .range(from, from + pageSize)
 
   if (error) throwSupabaseError(error)
 
-  const names = new Set<string>()
-  for (const workout of data ?? []) {
-    for (const exercise of workout.workout_exercises ?? []) {
-      const name = exercise.canonical_exercise_name?.trim()
-      if (name) names.add(name)
-    }
-  }
+  const rows = (data ?? []) as WorkoutHistoryRow[]
+  return { workouts: rows.slice(0, pageSize), hasMore: rows.length > pageSize }
+}
 
-  return [...names].sort((a, b) => a.localeCompare(b))
+export async function listLoggedExerciseNames(): Promise<string[]> {
+  const { data, error } = await supabase.rpc('list_logged_exercise_names')
+
+  if (error) throwSupabaseError(error)
+  return (data ?? []) as string[]
 }
 
 export async function getCanonicalExerciseName(name: string): Promise<string> {
@@ -239,6 +201,9 @@ export async function getCanonicalExerciseName(name: string): Promise<string> {
   if (error) throwSupabaseError(error)
   return (data as string | null) ?? name.trim()
 }
+
+// Weight suggestions need the last session plus the best set of the last 60 days; one session per day at most.
+const EXERCISE_INSIGHT_SESSION_LIMIT = 60
 
 export async function listExerciseInsightHistory(
   userId: string,
@@ -254,6 +219,7 @@ export async function listExerciseInsightHistory(
     .eq('user_id', userId)
     .eq('workout_exercises.canonical_exercise_name', canonicalExerciseName)
     .order('started_at', { ascending: false })
+    .limit(EXERCISE_INSIGHT_SESSION_LIMIT)
 
   if (error) throwSupabaseError(error)
   return (data ?? []) as ExerciseInsightHistoryRow[]
@@ -293,12 +259,16 @@ export type UnfinishedWorkout = {
   }>
 }
 
+// Only a recently started workout counts as "in progress"; older unfinished ones are abandoned sessions.
+const RESUME_WINDOW_HOURS = 12
+
 export async function getUnfinishedWorkout(userId: string): Promise<UnfinishedWorkout | null> {
   const { data, error } = await supabase
     .from('workouts')
     .select('id,started_at,title,workout_exercises(id,exercise_name,position,workout_sets(set_number,reps,weight_kg))')
     .eq('user_id', userId)
     .is('finished_at', null)
+    .gte('started_at', new Date(Date.now() - RESUME_WINDOW_HOURS * 60 * 60 * 1000).toISOString())
     .order('started_at', { ascending: false })
     .limit(1)
     .maybeSingle()

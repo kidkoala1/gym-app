@@ -43,14 +43,6 @@ export interface WorkoutSetRow {
   weight_kg: number
 }
 
-export interface WorkoutWithExerciseRefs {
-  id: string
-  started_at: string
-  finished_at: string | null
-  title: string | null
-  workout_exercises: Array<{ id: string }>
-}
-
 export interface WorkoutHistorySet {
   id: string
   set_number: number

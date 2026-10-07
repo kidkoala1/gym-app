@@ -20,7 +20,7 @@ Remaining:
 
 ## Other open items
 
-- **Unbounded queries.** `listWorkoutHistory` and `listLoggedExerciseNames` fetch everything for a user. Add pagination or move to RPCs.
+- **Unfinished workouts.** ~40% of existing workouts have `finished_at is null` (sessions where Finish was never pressed, or the app was reloaded before the resume feature). `get_progress_series` ignores them, so their sets are missing from Progress. Needs a decision: backfill `finished_at` for old ones with sets, or relax the RPC filter.
 - **`title` fallbacks in `workouts/api.ts`.** The column exists everywhere now; the missing-column retry paths can be removed.
 - **No Content-Security-Policy.** Needs to be set as a hosting header (a meta tag breaks the Vite dev server).
 - **Raw workout rows of public users are readable by every signed-in user** (select policies use `private.user_allows_public_progress`). Accepted for a small trusted group. Tightening it means Compare using only `get_progress_series`.

@@ -19,6 +19,9 @@ import type { EditableHistoryExercise, SetDraft } from '../localTypes'
 type HistoryTabProps = {
   isLoading: boolean
   workouts: WorkoutHistoryRow[]
+  hasMore: boolean
+  isLoadingMore: boolean
+  onLoadMore: () => void
   errorMessage?: string | null
   expandedHistory: Record<string, boolean>
   editingWorkoutId: string | null
@@ -50,6 +53,9 @@ type HistoryTabProps = {
 export function HistoryTab({
   isLoading,
   workouts,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
   errorMessage,
   expandedHistory,
   editingWorkoutId,
@@ -501,6 +507,12 @@ export function HistoryTab({
             })}
           </List>
         )}
+
+        {hasMore && !isLoading && !errorMessage ? (
+          <Button variant="outlined" onClick={onLoadMore} disabled={isLoadingMore}>
+            {isLoadingMore ? 'Loading...' : 'Load more'}
+          </Button>
+        ) : null}
       </Stack>
     </Paper>
   )

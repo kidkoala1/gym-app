@@ -17,7 +17,7 @@ import {
   Tabs,
   Typography,
 } from '@mui/material'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuthSession } from './features/auth/useAuthSession'
 import { AuthScreen } from './features/auth/components/AuthScreen'
 import { getProfile, upsertProfile } from './features/profile/api'
@@ -37,7 +37,7 @@ import {
   listExerciseInsightHistory,
   listExercises,
   listLoggedExerciseNames,
-  listWorkoutHistory,
+  listWorkoutHistoryPage,
   saveWorkoutEdit as saveWorkoutEditApi,
   type WorkoutEditExercise,
 } from './features/workouts/api'
@@ -93,6 +93,7 @@ function parseLocalizedDecimal(value: string): number {
   return Number(value.trim().replace(',', '.'))
 }
 
+const HISTORY_PAGE_SIZE = 20
 const MAX_TITLE_LENGTH = 100
 const MAX_DISPLAY_NAME_LENGTH = 50
 const MAX_REPS = 1000
@@ -266,11 +267,20 @@ function App() {
     enabled: Boolean(user?.id),
   })
 
-  const historyWorkoutsQuery = useQuery({
+  const historyWorkoutsQuery = useInfiniteQuery({
     queryKey: ['workout-history', user?.id],
-    queryFn: () => listWorkoutHistory(user!.id),
+    queryFn: ({ pageParam }) => listWorkoutHistoryPage(user!.id, pageParam, HISTORY_PAGE_SIZE),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => (lastPage.hasMore ? allPages.length : undefined),
     enabled: Boolean(user?.id) && activeTab === 'history',
   })
+  // Offset pages can overlap if a workout is added while paging, so de-duplicate by id.
+  const historyWorkouts = useMemo(() => {
+    const seen = new Set<string>()
+    return (historyWorkoutsQuery.data?.pages ?? [])
+      .flatMap((page) => page.workouts)
+      .filter((workout) => (seen.has(workout.id) ? false : (seen.add(workout.id), true)))
+  }, [historyWorkoutsQuery.data])
 
   const profileQuery = useQuery({
     queryKey: ['profile', user?.id],
@@ -279,7 +289,7 @@ function App() {
   })
   const loggedExerciseNamesQuery = useQuery({
     queryKey: ['logged-exercise-names', user?.id],
-    queryFn: () => listLoggedExerciseNames(user!.id),
+    queryFn: () => listLoggedExerciseNames(),
     enabled: Boolean(user?.id) && activeTab === 'progress',
   })
   const historyErrorMessage = historyWorkoutsQuery.isError
@@ -331,14 +341,8 @@ function App() {
   })
 
   const exerciseInsights = useMemo<ExerciseWeightInsights | null>(() => {
-    const queryInsights = buildExerciseInsightsFromWorkouts(
-      exerciseInsightsQuery.data ?? [],
-      canonicalExerciseInsightName,
-    )
-    if (queryInsights?.suggestedToday || !historyWorkoutsQuery.data) return queryInsights
-
-    return buildExerciseInsightsFromWorkouts(historyWorkoutsQuery.data, canonicalExerciseInsightName)
-  }, [canonicalExerciseInsightName, exerciseInsightsQuery.data, historyWorkoutsQuery.data])
+    return buildExerciseInsightsFromWorkouts(exerciseInsightsQuery.data ?? [], canonicalExerciseInsightName)
+  }, [canonicalExerciseInsightName, exerciseInsightsQuery.data])
 
   useEffect(() => {
     const metadataDisplay =
@@ -567,7 +571,7 @@ function App() {
   }
 
   function buildEditableExercises(workoutId: string): EditableHistoryExercise[] {
-    const workout = historyWorkoutsQuery.data?.find((item) => item.id === workoutId)
+    const workout = historyWorkouts.find((item) => item.id === workoutId)
     if (!workout) return []
 
     return [...(workout.workout_exercises ?? [])]
@@ -736,8 +740,8 @@ function App() {
       }
 
       const originalNames = new Map(
-        historyWorkoutsQuery.data
-          ?.find((item) => item.id === workoutId)
+        historyWorkouts
+          .find((item) => item.id === workoutId)
           ?.workout_exercises.map((exercise) => [exercise.id, exercise.exercise_name.trim()] as const) ?? [],
       )
 
@@ -1112,7 +1116,10 @@ function App() {
       ) : activeTab === 'history' ? (
         <HistoryTab
           isLoading={historyWorkoutsQuery.isLoading}
-          workouts={historyWorkoutsQuery.data ?? []}
+          workouts={historyWorkouts}
+          hasMore={Boolean(historyWorkoutsQuery.hasNextPage)}
+          isLoadingMore={historyWorkoutsQuery.isFetchingNextPage}
+          onLoadMore={() => void historyWorkoutsQuery.fetchNextPage()}
           errorMessage={historyErrorMessage}
           expandedHistory={expandedHistory}
           editingWorkoutId={editingWorkoutId}
