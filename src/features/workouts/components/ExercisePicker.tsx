@@ -19,6 +19,15 @@ type ExercisePickerProps = {
 
 /** A searchable list of exercises in a bottom sheet. */
 export function ExercisePicker(props: ExercisePickerProps) {
+  // SwipeableDrawer keeps its content mounted while closed, so remount it on each open to start
+  // with an empty search. Done on open rather than close so the closing slide doesn't flash a reset.
+  const [openCount, setOpenCount] = useState(0)
+  const [wasOpen, setWasOpen] = useState(props.open)
+  if (props.open !== wasOpen) {
+    setWasOpen(props.open)
+    if (props.open) setOpenCount((n) => n + 1)
+  }
+
   return (
     <BottomSheet
       open={props.open}
@@ -31,8 +40,7 @@ export function ExercisePicker(props: ExercisePickerProps) {
         </button>
       }
     >
-      {/* The sheet unmounts its content once closed, so the search starts empty every time. */}
-      <PickerContent {...props} />
+      <PickerContent key={openCount} {...props} />
     </BottomSheet>
   )
 }
